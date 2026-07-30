@@ -30,10 +30,13 @@ jobs:
             NO_INTERACTION=1 REPORT_EXIT_STATUS=1 make test
           '
 
+      # Il percorso dell'estensione e' quello dentro al container, non quello
+      # dell'host: il repository e' montato su /src.
       - name: Verifica che php la carichi
         run: |
-          docker run --rm -v "$PWD":/src -w /src/ext orma-build \
-            php -d extension="$PWD/ext/modules/orma.so" -m | grep -qx orma
+          docker run --rm -v "$PWD":/src -w /src/ext orma-build sh -c '
+            php -d extension=/src/ext/modules/orma.so -m | grep -qx orma
+          '
 
       - name: Diagnostica dei test falliti
         if: failure()
