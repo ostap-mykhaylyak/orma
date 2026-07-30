@@ -1,0 +1,6 @@
+# Il repository si sviluppa su Windows ma si compila dentro un container Ubuntu,
+# che vede direttamente la copia di lavoro. Un CRLF in config.m4 o in un .phpt
+# rompe la build in modi poco leggibili: qui si forza LF ovunque.
+* text=auto eol=lf
+
+*.so binary

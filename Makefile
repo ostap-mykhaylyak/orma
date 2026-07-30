@@ -1,0 +1,46 @@
+# orma — build dell'estensione (in container) e del daemon (nativo).
+#
+# L'estensione si compila sempre dentro l'immagine ubuntu:26.04 di build/, mai
+# sull'host: il glibc dell'immagine non deve essere piu' recente di quello del
+# target di produzione. Vedi DESIGN.md §8.
+
+IMAGE   ?= orma-build
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo 0.1.0)
+COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo sviluppo)
+
+MODULE  := github.com/ostap-mykhaylyak/orma
+LDFLAGS := -X $(MODULE)/internal/version.Version=$(VERSION) \
+           -X $(MODULE)/internal/version.Commit=$(COMMIT)
+
+DOCKER_RUN = docker run --rm -v "$(CURDIR)":/src -w /src/ext $(IMAGE) sh -c
+
+.PHONY: all image ext ext-test ext-clean daemon test smoke clean
+
+all: ext daemon
+
+image:
+	docker build -t $(IMAGE) build
+
+ext: image
+	$(DOCKER_RUN) 'phpize && ./configure --enable-orma && make -j"$$(nproc)"'
+
+ext-test: ext
+	$(DOCKER_RUN) 'NO_INTERACTION=1 REPORT_EXIT_STATUS=1 make test'
+
+ext-clean:
+	-$(DOCKER_RUN) 'test -f Makefile && make distclean; phpize --clean'
+
+daemon:
+	CGO_ENABLED=0 go build -trimpath -ldflags '$(LDFLAGS)' -o dist/orma ./cmd/orma
+
+test:
+	go vet ./...
+	go test ./...
+
+# Prova end-to-end: avvia il daemon nel container, gli manda un frame sul socket
+# e verifica che lo conti e si fermi pulito.
+smoke: image daemon
+	docker run --rm -v "$(CURDIR)":/src $(IMAGE) sh /src/test/smoke.sh
+
+clean: ext-clean
+	rm -rf dist

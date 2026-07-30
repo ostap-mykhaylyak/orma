@@ -1,0 +1,51 @@
+name: ci
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  estensione:
+    name: estensione (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: amd64, runner: ubuntu-24.04 }
+          - { arch: arm64, runner: ubuntu-24.04-arm }
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Immagine di build
+        run: docker build -t orma-build build
+
+      - name: Compila e testa
+        run: |
+          docker run --rm -v "$PWD":/src -w /src/ext orma-build sh -c '
+            phpize &&
+            ./configure --enable-orma &&
+            make -j"$(nproc)" &&
+            NO_INTERACTION=1 REPORT_EXIT_STATUS=1 make test
+          '
+
+      - name: Verifica che php la carichi
+        run: |
+          docker run --rm -v "$PWD":/src -w /src/ext orma-build \
+            php -d extension="$PWD/ext/modules/orma.so" -m | grep -qx orma
+
+      - name: Diagnostica dei test falliti
+        if: failure()
+        run: cat ext/tests/*.log 2>/dev/null || true
+
+  daemon:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26'
+      - run: go vet ./...
+      - run: go test ./...
+      - run: CGO_ENABLED=0 go build ./...

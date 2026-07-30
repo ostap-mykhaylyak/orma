@@ -1,0 +1,42 @@
+# Artefatti generati da phpize/autotools nella directory dell'estensione.
+ext/.deps
+ext/.libs/
+ext/autom4te.cache/
+ext/build/
+ext/modules/
+ext/acinclude.m4
+ext/aclocal.m4
+ext/config.guess
+ext/config.h
+ext/config.h.in
+ext/config.log
+ext/config.nice
+ext/config.status
+ext/config.sub
+ext/configure
+ext/configure.ac
+ext/install-sh
+ext/libtool
+ext/ltmain.sh
+ext/missing
+ext/mkinstalldirs
+ext/run-tests.php
+ext/Makefile
+ext/Makefile.fragments
+ext/Makefile.global
+ext/Makefile.objects
+ext/*.dep
+ext/*.lo
+ext/*.la
+ext/*.o
+
+# Output dei test .phpt
+ext/tests/*.diff
+ext/tests/*.exp
+ext/tests/*.log
+ext/tests/*.out
+ext/tests/*.php
+ext/tests/*.sh
+
+# Binari
+/dist/

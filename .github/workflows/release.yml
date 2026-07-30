@@ -1,0 +1,67 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: artefatti (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: amd64, runner: ubuntu-24.04 }
+          - { arch: arm64, runner: ubuntu-24.04-arm }
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26'
+
+      - name: Immagine di build
+        run: docker build -t orma-build build
+
+      - name: Estensione
+        run: |
+          docker run --rm -v "$PWD":/src -w /src/ext orma-build sh -c '
+            phpize &&
+            ./configure --enable-orma &&
+            make -j"$(nproc)" &&
+            NO_INTERACTION=1 REPORT_EXIT_STATUS=1 make test
+          '
+
+      - name: Artefatti
+        run: |
+          set -eu
+          version="${GITHUB_REF_NAME#v}"
+          mkdir -p dist
+
+          # php8.5-fpm su Ubuntu e' NTS: si pubblica solo la variante NTS.
+          cp ext/modules/orma.so "dist/orma-${version}-php8.5-nts-${{ matrix.arch }}.so"
+
+          CGO_ENABLED=0 GOOS=linux GOARCH=${{ matrix.arch }} go build -trimpath \
+            -ldflags "-X github.com/ostap-mykhaylyak/orma/internal/version.Version=${version} -X github.com/ostap-mykhaylyak/orma/internal/version.Commit=${GITHUB_SHA:0:7}" \
+            -o "dist/orma-${version}-linux-${{ matrix.arch }}" ./cmd/orma
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.arch }}
+          path: dist/
+
+  release:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" dist/* --generate-notes
