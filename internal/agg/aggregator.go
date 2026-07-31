@@ -36,6 +36,10 @@ type Options struct {
 	TraceThresholdNS uint64
 	// TraceMaxPerWindow limita quanti trace si conservano al minuto.
 	TraceMaxPerWindow int
+	// SlowestNames e' quante transazioni distinte, fra quelle rimaste sotto
+	// soglia, conservano comunque la loro esecuzione piu' lenta del minuto.
+	// Serve a non restare completamente ciechi sulle transazioni veloci.
+	SlowestNames int
 }
 
 func (o Options) withDefaults() Options {
@@ -44,6 +48,9 @@ func (o Options) withDefaults() Options {
 	}
 	if o.TraceMaxPerWindow <= 0 {
 		o.TraceMaxPerWindow = 20
+	}
+	if o.SlowestNames < 0 {
+		o.SlowestNames = 0
 	}
 	return o
 }
@@ -56,6 +63,9 @@ type Aggregator struct {
 
 	mu      sync.Mutex
 	windows map[int64]*store.Window
+	// La piu' lenta del minuto per nome, fra quelle che non hanno superato la
+	// soglia. Tenuta a parte per non doverla distinguere dentro Window.
+	slowest map[int64]map[string]*store.Trace
 }
 
 // New costruisce un aggregatore.
@@ -65,6 +75,7 @@ func New(st *store.Store, log *slog.Logger, opts Options) *Aggregator {
 		log:     log,
 		opts:    opts.withDefaults(),
 		windows: make(map[int64]*store.Window),
+		slowest: make(map[int64]map[string]*store.Trace),
 	}
 }
 
@@ -185,7 +196,37 @@ func (a *Aggregator) Add(txn *protocol.Transaction) {
 	// transazioni distinte invece che al traffico.
 	if a.keepTrace(txn, w) {
 		w.Traces = append(w.Traces, buildTrace(txn, app, name, kind, ts))
+		return
 	}
+
+	// Sotto soglia: si tiene solo la piu' lenta del minuto per quel nome, e
+	// solo per un numero limitato di nomi. Senza questo, una transazione che
+	// non supera mai la soglia non avrebbe mai un trace da guardare.
+	a.trackSlowest(windowTS, txn, app, name, kind, ts)
+}
+
+func (a *Aggregator) trackSlowest(windowTS int64, txn *protocol.Transaction,
+	app, name, kind string, ts int64) {
+
+	if a.opts.SlowestNames == 0 {
+		return
+	}
+
+	per := a.slowest[windowTS]
+	if per == nil {
+		per = make(map[string]*store.Trace)
+		a.slowest[windowTS] = per
+	}
+
+	if corrente, ok := per[name]; ok {
+		if corrente.DurationNS >= txn.DurationNano {
+			return
+		}
+	} else if len(per) >= a.opts.SlowestNames {
+		return
+	}
+
+	per[name] = buildTrace(txn, app, name, kind, ts)
 }
 
 func (a *Aggregator) keepTrace(txn *protocol.Transaction, w *store.Window) bool {
@@ -328,8 +369,19 @@ func (a *Aggregator) flush(all bool) {
 	ready := make(map[int64]*store.Window)
 	for ts, w := range a.windows {
 		if all || ts < current {
+			for _, t := range a.slowest[ts] {
+				w.Traces = append(w.Traces, t)
+			}
+			delete(a.slowest, ts)
 			ready[ts] = w
 			delete(a.windows, ts)
+		}
+	}
+	// Finestre di sole lente senza metriche non esistono, ma se restasse una
+	// mappa orfana crescerebbe per sempre.
+	for ts := range a.slowest {
+		if all || ts < current {
+			delete(a.slowest, ts)
 		}
 	}
 	a.mu.Unlock()

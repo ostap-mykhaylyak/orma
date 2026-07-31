@@ -104,6 +104,8 @@
     <a href="?minuti=60"   {{ if eq .Minuti 60 }}class="on"{{ end }}>1 ora</a>
     <a href="?minuti=360"  {{ if eq .Minuti 360 }}class="on"{{ end }}>6 ore</a>
     <a href="?minuti=1440" {{ if eq .Minuti 1440 }}class="on"{{ end }}>24 ore</a>
+    <a href="?minuti=10080" {{ if eq .Minuti 10080 }}class="on"{{ end }}>7 giorni</a>
+    <a href="?minuti=43200" {{ if eq .Minuti 43200 }}class="on"{{ end }}>30 giorni</a>
   </div>
 {{ end }}
 

@@ -5,8 +5,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/ostap-mykhaylyak/orma/internal/store"
 )
 
 // DefaultPath e' il percorso usato quando non se ne indica un altro con --config.
@@ -35,6 +38,18 @@ type Config struct {
 	// ApdexTMS e' la soglia di soddisfazione, in millisecondi: entro questa
 	// una richiesta conta intera, entro il quadruplo conta meta'.
 	ApdexTMS int `yaml:"apdex_t_ms"`
+	// TraceSlowestNames e' quante transazioni distinte rimaste sotto soglia
+	// conservano comunque la loro esecuzione piu' lenta del minuto.
+	TraceSlowestNames int `yaml:"trace_slowest_names"`
+
+	// Conservazione. La granularita' fine costa: si tiene poco, e le
+	// aggregazioni piu' grosse la sostituiscono man mano.
+	Retention1mHours   int `yaml:"retention_1m_hours"`
+	Retention5mDays    int `yaml:"retention_5m_days"`
+	Retention1hDays    int `yaml:"retention_1h_days"`
+	RetentionTraceDays int `yaml:"retention_traces_days"`
+	RetentionErrorDays int `yaml:"retention_errors_days"`
+	RetentionSQLDays   int `yaml:"retention_sql_days"`
 }
 
 // Default restituisce la configurazione predefinita.
@@ -48,8 +63,16 @@ func Default() Config {
 
 		TraceThresholdMS: 500,
 		TraceMaxPerMin:   20,
-		MaxTxnNames:      5000,
-		ApdexTMS:         500,
+		MaxTxnNames:       5000,
+		ApdexTMS:          500,
+		TraceSlowestNames: 5,
+
+		Retention1mHours:   24,
+		Retention5mDays:    7,
+		Retention1hDays:    395,
+		RetentionTraceDays: 7,
+		RetentionErrorDays: 30,
+		RetentionSQLDays:   7,
 	}
 }
 
@@ -110,7 +133,36 @@ func (c Config) Validate() error {
 	if c.ApdexTMS <= 0 {
 		return fmt.Errorf("apdex_t_ms deve essere maggiore di zero")
 	}
+	if c.TraceSlowestNames < 0 {
+		return fmt.Errorf("trace_slowest_names non puo' essere negativo")
+	}
+
+	// La granularita' fine deve coprire almeno fino a dove comincia quella
+	// grossa, altrimenti resta un buco nel quale le pagine non trovano nulla.
+	if c.Retention1mHours <= 0 {
+		return fmt.Errorf("retention_1m_hours deve essere maggiore di zero")
+	}
+	if c.Retention5mDays*24 < c.Retention1mHours {
+		return fmt.Errorf("retention_5m_days copre meno di retention_1m_hours: resterebbe un buco")
+	}
+	if c.Retention1hDays < c.Retention5mDays {
+		return fmt.Errorf("retention_1h_days copre meno di retention_5m_days: resterebbe un buco")
+	}
 	return nil
+}
+
+// Retention traduce la configurazione nelle durate usate dallo storage.
+func (c Config) Retention() store.Retention {
+	giorni := func(n int) time.Duration { return time.Duration(n) * 24 * time.Hour }
+
+	return store.Retention{
+		Minuto:  time.Duration(c.Retention1mHours) * time.Hour,
+		Cinque:  giorni(c.Retention5mDays),
+		Ora:     giorni(c.Retention1hDays),
+		Tracce:  giorni(c.RetentionTraceDays),
+		Errori:  giorni(c.RetentionErrorDays),
+		QuerySQ: giorni(c.RetentionSQLDays),
+	}
 }
 
 // Template e' la configurazione commentata scritta da "orma --init".
@@ -150,4 +202,19 @@ const Template = `# Configurazione di orma.
 # Soglia di soddisfazione per l'apdex, in millisecondi: entro questa una
 # richiesta conta intera, entro il quadruplo conta meta', oltre non conta.
 #apdex_t_ms: 500
+
+# Quante transazioni distinte rimaste sotto soglia conservano comunque la
+# loro esecuzione piu' lenta del minuto. Serve a non restare ciechi sulle
+# transazioni veloci, che altrimenti non avrebbero mai un trace.
+#trace_slowest_names: 5
+
+# Conservazione. La granularita' al minuto costa, quindi si tiene poco e le
+# aggregazioni a cinque minuti e a un'ora la sostituiscono man mano. Ogni
+# livello deve coprire almeno fino a dove comincia il successivo.
+#retention_1m_hours: 24
+#retention_5m_days: 7
+#retention_1h_days: 395
+#retention_traces_days: 7
+#retention_errors_days: 30
+#retention_sql_days: 7
 `

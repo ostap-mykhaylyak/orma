@@ -18,9 +18,11 @@ EXT="-d extension=/src/ext/modules/orma.so -d orma.app_name=prova -d orma.detail
 echo "== preparazione =="
 /src/dist/orma --init >/dev/null
 sed -i 's|#log_level: info|log_level: debug|' /etc/orma/orma.yaml
-# Soglia a zero: nella prova le richieste durano pochi millisecondi e con la
-# soglia di produzione non si conserverebbe alcun trace.
-echo 'trace_threshold_ms: 0' >>/etc/orma/orma.yaml
+# Soglia bassa ma non nulla: nella prova le richieste durano pochi
+# millisecondi, e con 8 ms alcune restano sopra e altre sotto. Serve a
+# esercitare entrambe le vie di conservazione: sopra soglia, e "la piu' lenta
+# del minuto" per quelle che sotto soglia non avrebbero mai un trace.
+echo 'trace_threshold_ms: 8' >>/etc/orma/orma.yaml
 /src/dist/orma --check-config >/dev/null && echo "configurazione valida"
 
 cat >/tmp/lavoro.php <<'PHP'
@@ -112,10 +114,13 @@ sqlite3 -header -column /var/lib/orma/orma.db \
 	   FROM errors ORDER BY severity DESC, count DESC;" 2>/dev/null || echo "(tabella assente)"
 
 echo
-echo "== trace conservati =="
+echo "== trace conservati (soglia 8 ms: sotto restano solo le piu' lente del minuto) =="
 sqlite3 -header -column /var/lib/orma/orma.db \
-	"SELECT id, txn_name, ROUND(duration_ns/1e6,2) AS ms, json_array_length(spans) AS span
-	   FROM traces ORDER BY duration_ns DESC LIMIT 5;" 2>/dev/null || echo "(tabella assente)"
+	"SELECT id, txn_name, ROUND(duration_ns/1e6,2) AS ms,
+	        CASE WHEN has_error THEN 'errore'
+	             WHEN duration_ns >= 8000000 THEN 'sopra soglia'
+	             ELSE 'piu lenta del minuto' END AS motivo
+	   FROM traces ORDER BY duration_ns DESC;" 2>/dev/null || echo "(tabella assente)"
 
 echo
 echo "== waterfall del trace piu' lento =="

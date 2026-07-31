@@ -226,9 +226,14 @@ sulla soglia `apdex_t` configurata per app.
 
 Il trace completo si salva **solo se** almeno una condizione è vera:
 
-1. durata > `trace_threshold_ms` (default `4 × apdex_t`)
+1. durata > `trace_threshold_ms`
 2. la transazione ha prodotto un errore
 3. è la più lenta del minuto per quel nome di transazione
+
+La terza regola vale solo per le prime `trace_slowest_names` (default 5) transazioni
+distinte del minuto: senza un tetto, un'applicazione con molti nomi conserverebbe un
+trace per ciascuno a ogni minuto. Serve a non restare completamente ciechi sulle
+transazioni veloci, che per definizione non superano mai la soglia.
 
 Tutto il resto contribuisce solo alle metriche aggregate. È questa regola che rende lo
 storage sostenibile: le metriche crescono con il numero di transazioni distinte, non con
@@ -250,17 +255,42 @@ spazi. Il daemon riceve solo la forma già offuscata, la hasha (FNV-1a) e la agg
 
 ```
 apps(id, name, apdex_t, created_at)
-metrics_1m(app_id, bucket_ts, txn_name, category, count, sum_ns, sumsq_ns,
-           min_ns, max_ns, histogram BLOB)
-metrics_5m(...)      -- rollup
-metrics_1h(...)      -- rollup
-traces(id, app_id, ts, txn_name, duration_ns, http_status, has_error, payload BLOB)
-slow_sql(app_id, bucket_ts, query_hash, statement, count, sum_ns, max_ns)
-errors(id, app_id, ts, txn_name, class, message, stack BLOB)
+metrics_1m(app_id, bucket_ts, txn_name, kind, category,
+           count, errors, sum_ns, sumsq_ms, min_ns, max_ns, histogram BLOB)
+metrics_5m(...)      -- stessa forma
+metrics_1h(...)      -- stessa forma
+traces(id, app_id, ts, txn_name, kind, duration_ns, http_status, has_error, spans TEXT)
+slow_sql(app_id, bucket_ts, stmt_hash, statement, count, errors, sum_ns, max_ns)
+externals(app_id, bucket_ts, host, count, errors, sum_ns, max_ns)
+errors(app_id, bucket_ts, fingerprint, class, message, file, line, txn_name, severity, count)
 ```
 
-Retention di default: `metrics_1m` 24h, `metrics_5m` 7g, `metrics_1h` 13 mesi,
-`traces` 7g, `errors` 30g. Rollup e purge in un ticker con `VACUUM` periodico.
+`kind` distingue web da background; `category` è la scomposizione (`totale`,
+`database`, `esterne`). Sono due dimensioni diverse e tenerle nella stessa colonna,
+come nella prima stesura, rendeva impossibile chiedere "il tempo in database delle sole
+transazioni web".
+
+### Rollup: ricalcolo, non avanzamento
+
+Il rollup **ricalcola gli ultimi N bucket completi** invece di tenere un segnalibro di
+avanzamento: 1m → 5m ogni minuto sugli ultimi 3 bucket, 5m → 1h ogni minuto sugli
+ultimi 2. È idempotente, quindi un giro saltato viene rimediato dal successivo e non
+esiste uno stato da riparare a mano quando qualcosa va storto.
+
+Il rollup **non consuma** la granularità fine: è la purga a rimuoverla quando scade.
+Così una query su 24 ore trova ancora il minuto, e una su 30 giorni trova l'ora.
+
+Le pagine scelgono la tabella in base all'intervallo chiesto. Da qui il vincolo,
+verificato da `--check-config`: **ogni livello di conservazione deve coprire almeno fino
+a dove comincia il successivo**, altrimenti resta un buco nel quale le pagine non
+trovano nulla.
+
+`slow_sql`, `externals` ed `errors` non vengono aggregati: la loro cardinalità è
+limitata dal numero di forme distinte, non dal traffico. Hanno solo un TTL. Se un giorno
+crescessero, il passo successivo è portarli a bucket orari.
+
+Retention di default: `metrics_1m` 24h, `metrics_5m` 7g, `metrics_1h` 395g,
+`traces` 7g, `errors` 30g, `slow_sql` ed `externals` 7g.
 
 ---
 

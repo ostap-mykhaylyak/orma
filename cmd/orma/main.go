@@ -207,7 +207,7 @@ func doStart(cfg config.Config, configPath string) error {
 	}
 	defer pf.Release()
 
-	st, err := store.Open(cfg.Database, log)
+	st, err := store.Open(cfg.Database, log, cfg.Retention())
 	if err != nil {
 		return err
 	}
@@ -220,11 +220,18 @@ func doStart(cfg config.Config, configPath string) error {
 		MaxNames:          cfg.MaxTxnNames,
 		TraceThresholdNS:  uint64(cfg.TraceThresholdMS) * 1e6,
 		TraceMaxPerWindow: cfg.TraceMaxPerMin,
+		SlowestNames:      cfg.TraceSlowestNames,
 	})
 	aggDone := make(chan struct{})
 	go func() {
 		defer close(aggDone)
 		aggregator.Run(ctx)
+	}()
+
+	manutDone := make(chan struct{})
+	go func() {
+		defer close(manutDone)
+		manutenzione(ctx, st, cfg.Retention(), log)
 	}()
 
 	ln := ingest.New(cfg.Socket, log, func(txn *protocol.Transaction) {
@@ -268,6 +275,7 @@ func doStart(cfg config.Config, configPath string) error {
 		frames, bytes, rejected := ln.Stats()
 		log.Info("ingestione", "frame", frames, "byte", bytes, "scartati", rejected)
 		<-aggDone
+		<-manutDone
 		if cause != nil {
 			return cause
 		}
@@ -298,6 +306,33 @@ func doStart(cfg config.Config, configPath string) error {
 		case err := <-webErr:
 			if err != nil {
 				return stop(fmt.Errorf("interfaccia web: %w", err))
+			}
+		}
+	}
+}
+
+// manutenzione tiene il database a dimensione stabile: aggrega le metriche
+// verso granularita' piu' grosse e rimuove cio' che e' scaduto.
+//
+// Un errore non ferma il daemon: la raccolta e' piu' importante della
+// manutenzione, e il giro successivo riprova.
+func manutenzione(ctx context.Context, st *store.Store, r store.Retention, log *slog.Logger) {
+	rollup := time.NewTicker(time.Minute)
+	defer rollup.Stop()
+	purga := time.NewTicker(10 * time.Minute)
+	defer purga.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-rollup.C:
+			if err := st.Rollup(log); err != nil {
+				log.Error("rollup fallito", "errore", err)
+			}
+		case <-purga.C:
+			if err := st.Purge(r, log); err != nil {
+				log.Error("purga fallita", "errore", err)
 			}
 		}
 	}

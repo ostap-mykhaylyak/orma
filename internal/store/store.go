@@ -22,7 +22,7 @@ import (
 // schemaVersion cambia a ogni modifica incompatibile delle tabelle. Prima
 // della 1.0 le tabelle vengono ricreate invece di essere migrate: i dati di
 // telemetria sono rimpiazzabili, il codice di migrazione no.
-const schemaVersion = 4
+const schemaVersion = 5
 
 // Categorie di metrica.
 const (
@@ -113,7 +113,8 @@ func (w *Window) Empty() bool {
 
 // Store e' l'accesso al database.
 type Store struct {
-	db *sql.DB
+	db        *sql.DB
+	retention Retention
 
 	mu     sync.Mutex
 	appIDs map[string]int64
@@ -174,7 +175,7 @@ CREATE INDEX IF NOT EXISTS externals_ts ON externals (bucket_ts);
 `
 
 // Open apre il database, creando file e schema se mancano.
-func Open(path string, log *slog.Logger) (*Store, error) {
+func Open(path string, log *slog.Logger, retention Retention) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, fmt.Errorf("creazione della directory del database: %w", err)
 	}
@@ -194,7 +195,7 @@ func Open(path string, log *slog.Logger) (*Store, error) {
 		return nil, err
 	}
 
-	return &Store{db: db, appIDs: make(map[string]int64)}, nil
+	return &Store{db: db, retention: retention, appIDs: make(map[string]int64)}, nil
 }
 
 // migrate applica lo schema. Prima della 1.0 un cambio di versione ricrea le
@@ -210,7 +211,10 @@ func migrate(db *sql.DB, log *slog.Logger) error {
 			log.Warn("schema del database obsoleto, le metriche esistenti vengono scartate",
 				"trovata", current, "attesa", schemaVersion)
 		}
-		for _, t := range []string{"metrics_1m", "slow_sql", "externals", "traces", "errors"} {
+		for _, t := range []string{
+			"metrics_1m", "metrics_5m", "metrics_1h",
+			"slow_sql", "externals", "traces", "errors",
+		} {
 			if _, err := db.Exec(`DROP TABLE IF EXISTS ` + t); err != nil {
 				return fmt.Errorf("rimozione di %s: %w", t, err)
 			}
@@ -225,6 +229,9 @@ func migrate(db *sql.DB, log *slog.Logger) error {
 	}
 	if _, err := db.Exec(errorSchema); err != nil {
 		return fmt.Errorf("creazione dello schema degli errori: %w", err)
+	}
+	if _, err := db.Exec(rollupSchema); err != nil {
+		return fmt.Errorf("creazione dello schema dei rollup: %w", err)
 	}
 	if _, err := db.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, schemaVersion)); err != nil {
 		return fmt.Errorf("scrittura di user_version: %w", err)
@@ -471,10 +478,11 @@ func (s *Store) Summary(since int64, apdexTMS float64) (Summary, error) {
 	var out Summary
 	out.ApdexTMS = apdexTMS
 
-	rows, err := s.db.Query(
+	rows, err := s.db.Query(fmt.Sprintf(
 		`SELECT count, errors, sum_ns, histogram
-		   FROM metrics_1m
-		  WHERE bucket_ts >= ? AND category = ?`, since, CategoriaTotale)
+		   FROM %s
+		  WHERE bucket_ts >= ? AND category = ?`,
+		s.tabellaPer(since, s.retention)), since, CategoriaTotale)
 	if err != nil {
 		return out, err
 	}
@@ -536,14 +544,16 @@ func (t TxnStat) PHPMS() float64 {
 // consumato, non per durata media: una pagina da 300 ms chiamata diecimila
 // volte pesa piu' di una da 3 secondi chiamata due volte.
 func (s *Store) TopTransactions(since int64, limit int) ([]TxnStat, error) {
-	rows, err := s.db.Query(
+	tabella := s.tabellaPer(since, s.retention)
+
+	rows, err := s.db.Query(fmt.Sprintf(
 		`SELECT a.name, m.txn_name, m.kind,
 		        SUM(m.count), SUM(m.errors), SUM(m.sum_ns), MAX(m.max_ns)
-		   FROM metrics_1m m JOIN apps a ON a.id = m.app_id
+		   FROM %s m JOIN apps a ON a.id = m.app_id
 		  WHERE m.bucket_ts >= ? AND m.category = ?
 		  GROUP BY a.name, m.txn_name, m.kind
 		  ORDER BY SUM(m.sum_ns) DESC
-		  LIMIT ?`, since, CategoriaTotale, limit)
+		  LIMIT ?`, tabella), since, CategoriaTotale, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -571,7 +581,7 @@ func (s *Store) TopTransactions(since int64, limit int) ([]TxnStat, error) {
 	}
 	rows.Close()
 
-	breakdown, err := s.breakdown(since)
+	breakdown, err := s.breakdown(since, tabella)
 	if err != nil {
 		return nil, err
 	}
@@ -580,7 +590,7 @@ func (s *Store) TopTransactions(since int64, limit int) ([]TxnStat, error) {
 		out[i].DBMS = breakdown[k][CategoriaDatabase]
 		out[i].ExtMS = breakdown[k][CategoriaEsterne]
 
-		p95, err := s.percentile(since, out[i].App, out[i].Name, out[i].Kind, 0.95)
+		p95, err := s.percentile(since, tabella, out[i].App, out[i].Name, out[i].Kind, 0.95)
 		if err != nil {
 			return nil, err
 		}
@@ -590,12 +600,12 @@ func (s *Store) TopTransactions(since int64, limit int) ([]TxnStat, error) {
 }
 
 // breakdown restituisce, per transazione, i millisecondi spesi per categoria.
-func (s *Store) breakdown(since int64) (map[[2]string]map[string]float64, error) {
-	rows, err := s.db.Query(
+func (s *Store) breakdown(since int64, tabella string) (map[[2]string]map[string]float64, error) {
+	rows, err := s.db.Query(fmt.Sprintf(
 		`SELECT txn_name, kind, category, SUM(sum_ns)
-		   FROM metrics_1m
+		   FROM %s
 		  WHERE bucket_ts >= ? AND category != ?
-		  GROUP BY txn_name, kind, category`, since, CategoriaTotale)
+		  GROUP BY txn_name, kind, category`, tabella), since, CategoriaTotale)
 	if err != nil {
 		return nil, err
 	}
@@ -617,12 +627,12 @@ func (s *Store) breakdown(since int64) (map[[2]string]map[string]float64, error)
 	return out, rows.Err()
 }
 
-func (s *Store) percentile(since int64, app, txn, kind string, p float64) (float64, error) {
-	rows, err := s.db.Query(
+func (s *Store) percentile(since int64, tabella, app, txn, kind string, p float64) (float64, error) {
+	rows, err := s.db.Query(fmt.Sprintf(
 		`SELECT m.histogram
-		   FROM metrics_1m m JOIN apps a ON a.id = m.app_id
+		   FROM %s m JOIN apps a ON a.id = m.app_id
 		  WHERE m.bucket_ts >= ? AND a.name = ? AND m.txn_name = ?
-		    AND m.kind = ? AND m.category = ?`,
+		    AND m.kind = ? AND m.category = ?`, tabella),
 		since, app, txn, kind, CategoriaTotale)
 	if err != nil {
 		return 0, err
