@@ -1,0 +1,39 @@
+{{ template "intestazione" . }}
+
+  <div class="tiles">
+    <div class="tile"><div class="k">Chiamate</div><div class="v">{{ num .Totale.Count }}</div></div>
+    <div class="tile"><div class="k">Tempo in rete</div><div class="v">{{ seconds .Totale.TotalMS }}</div></div>
+    <div class="tile"><div class="k">Media</div><div class="v">{{ ms .Totale.AvgMS }}</div></div>
+    <div class="tile"><div class="k">Host distinti</div><div class="v">{{ len .Host }}</div></div>
+  </div>
+
+  <h2>Host per tempo consumato</h2>
+  <div class="scroll">
+    {{ if .Host }}
+    <table>
+      <thead>
+        <tr><th>Host</th><th>Chiamate</th><th>Tempo totale</th><th>Media</th><th>Massimo</th><th>Fallite</th></tr>
+      </thead>
+      <tbody>
+        {{ range .Host }}
+        <tr>
+          <td class="name">{{ .Host }}</td>
+          <td class="n">{{ num .Count }}</td>
+          <td class="n">{{ seconds .TotalMS }}</td>
+          <td class="n">{{ ms .AvgMS }}</td>
+          <td class="n">{{ ms .MaxMS }}</td>
+          <td class="n">{{ num .Errors }}</td>
+        </tr>
+        {{ end }}
+      </tbody>
+    </table>
+    {{ else }}
+    <div class="empty">Nessuna chiamata uscente in questo intervallo.</div>
+    {{ end }}
+  </div>
+
+  <div class="legenda">
+    <span>Viene registrato solo l'host: percorso, query string e credenziali non lasciano il processo PHP.</span>
+  </div>
+
+{{ template "chiusura" . }}

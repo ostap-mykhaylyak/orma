@@ -1,0 +1,98 @@
+{{ define "intestazione" }}<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>orma — {{ .Titolo }}</title>
+<style>
+  :root {
+    --bg: #fbfbfa; --fg: #1c1b19; --muted: #6b6a67;
+    --line: #e3e2df; --card: #fff; --accent: #b8541f; --err: #b3261e;
+    --db: #2f6f5e; --ext: #4a5aa8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161513; --fg: #eceae6; --muted: #9a978f;
+      --line: #2e2c29; --card: #1e1d1b; --accent: #e08a4e; --err: #f2b8b5;
+      --db: #7fc9b2; --ext: #9aa8e8;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
+  header { display: flex; align-items: baseline; gap: .75rem; flex-wrap: wrap; }
+  h1 { font-size: 1.35rem; margin: 0; letter-spacing: -.01em; }
+  .sub { color: var(--muted); font-size: .85rem; }
+  nav { margin: 1.1rem 0 .6rem; display: flex; gap: 1.1rem; flex-wrap: wrap;
+        border-bottom: 1px solid var(--line); padding-bottom: .6rem; }
+  nav a { color: var(--muted); text-decoration: none; font-size: .9rem; }
+  nav a.on { color: var(--fg); font-weight: 600; box-shadow: inset 0 -2px 0 var(--accent); }
+  .intervalli { margin: .9rem 0 1.5rem; display: flex; gap: .4rem; flex-wrap: wrap; }
+  .intervalli a {
+    padding: .25rem .65rem; border: 1px solid var(--line); border-radius: 999px;
+    color: var(--muted); text-decoration: none; font-size: .8rem;
+  }
+  .intervalli a.on { border-color: var(--accent); color: var(--accent); }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: .75rem; }
+  .tile { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: .9rem 1rem; }
+  .tile .k { color: var(--muted); font-size: .72rem; text-transform: uppercase; letter-spacing: .06em; }
+  .tile .v { font-size: 1.45rem; margin-top: .3rem; font-variant-numeric: tabular-nums; }
+  .tile .v.err { color: var(--err); }
+  h2 { font-size: 1rem; margin: 2.1rem 0 .7rem; font-weight: 600; }
+  .scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--card); }
+  table { border-collapse: collapse; width: 100%; font-size: .875rem; }
+  th, td { padding: .55rem .8rem; text-align: right; white-space: nowrap; }
+  th { color: var(--muted); font-weight: 500; font-size: .72rem; text-transform: uppercase; letter-spacing: .05em; }
+  th:first-child, td:first-child { text-align: left; white-space: normal; }
+  tbody tr { border-top: 1px solid var(--line); }
+  td.name, td.sql { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .8rem; }
+  td.sql { white-space: normal; word-break: break-word; max-width: 46ch; }
+  .tag { font-size: .68rem; color: var(--muted); border: 1px solid var(--line);
+         border-radius: 4px; padding: 0 .35rem; margin-left: .4rem; }
+  td.n { font-variant-numeric: tabular-nums; }
+  .barra { display: flex; height: 6px; border-radius: 3px; overflow: hidden; background: var(--line); min-width: 90px; }
+  .barra i { display: block; }
+  .barra .php { background: var(--accent); }
+  .barra .db  { background: var(--db); }
+  .barra .ext { background: var(--ext); }
+  .legenda { display: flex; gap: 1rem; font-size: .75rem; color: var(--muted); margin: .6rem .2rem 0; flex-wrap: wrap; }
+  .legenda span::before { content: ""; display: inline-block; width: 9px; height: 9px;
+                          border-radius: 2px; margin-right: .35rem; vertical-align: baseline; }
+  .legenda .php::before { background: var(--accent); }
+  .legenda .db::before  { background: var(--db); }
+  .legenda .ext::before { background: var(--ext); }
+  .empty { padding: 2.5rem 1rem; text-align: center; color: var(--muted); }
+  footer { margin-top: 2.5rem; color: var(--muted); font-size: .78rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1>orma</h1>
+    <span class="sub">{{ .Titolo }} &middot; ultimi {{ .Minuti }} minuti &middot; aggiornato alle {{ .Generato }}</span>
+  </header>
+
+  <nav>
+    <a href="/?minuti={{ .Minuti }}"         {{ if eq .Pagina "panoramica" }}class="on"{{ end }}>Panoramica</a>
+    <a href="/database?minuti={{ .Minuti }}" {{ if eq .Pagina "database" }}class="on"{{ end }}>Database</a>
+    <a href="/esterne?minuti={{ .Minuti }}"  {{ if eq .Pagina "esterne" }}class="on"{{ end }}>Esterne</a>
+  </nav>
+
+  <div class="intervalli">
+    <a href="?minuti=30"   {{ if eq .Minuti 30 }}class="on"{{ end }}>30 min</a>
+    <a href="?minuti=60"   {{ if eq .Minuti 60 }}class="on"{{ end }}>1 ora</a>
+    <a href="?minuti=360"  {{ if eq .Minuti 360 }}class="on"{{ end }}>6 ore</a>
+    <a href="?minuti=1440" {{ if eq .Minuti 1440 }}class="on"{{ end }}>24 ore</a>
+  </div>
+{{ end }}
+
+{{ define "chiusura" }}
+  <footer>orma {{ .Version }} &middot; ordinamento per tempo totale consumato, non per durata media</footer>
+</div>
+</body>
+</html>
+{{ end }}

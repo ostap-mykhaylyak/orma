@@ -14,6 +14,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         re2c \
         php8.5-dev \
         php8.5-cli \
+        php8.5-sqlite3 \
+        php8.5-curl \
         sqlite3 \
     && rm -rf /var/lib/apt/lists/*
 

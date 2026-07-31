@@ -22,21 +22,21 @@ const WindowSeconds = 60
 // poco piu' di un minuto.
 const flushInterval = 15 * time.Second
 
+// OverflowName raccoglie le transazioni oltre il limite di cardinalita'.
+const OverflowName = "OtherTransaction/*"
+
 // Aggregator accumula in memoria e riversa su store a finestra chiusa.
 type Aggregator struct {
 	store *store.Store
 	log   *slog.Logger
 
 	mu      sync.Mutex
-	windows map[int64]map[store.Key]*store.Bucket
+	windows map[int64]*store.Window
 
 	// Valvola contro l'esplosione di cardinalita': oltre questo numero di nomi
 	// distinti per finestra, i nuovi confluiscono in un nome di raccolta.
 	maxNames int
 }
-
-// OverflowName raccoglie le transazioni oltre il limite di cardinalita'.
-const OverflowName = "OtherTransaction/*"
 
 // New costruisce un aggregatore.
 func New(st *store.Store, log *slog.Logger, maxNames int) *Aggregator {
@@ -46,7 +46,7 @@ func New(st *store.Store, log *slog.Logger, maxNames int) *Aggregator {
 	return &Aggregator{
 		store:    st,
 		log:      log,
-		windows:  make(map[int64]map[store.Key]*store.Bucket),
+		windows:  make(map[int64]*store.Window),
 		maxNames: maxNames,
 	}
 }
@@ -62,7 +62,7 @@ func (a *Aggregator) Add(txn *protocol.Transaction) {
 	if ts == 0 {
 		ts = time.Now().Unix()
 	}
-	window := ts - ts%WindowSeconds
+	windowTS := ts - ts%WindowSeconds
 
 	app := txn.App
 	if app == "" {
@@ -72,52 +72,131 @@ func (a *Aggregator) Add(txn *protocol.Transaction) {
 	if name == "" {
 		name = "sconosciuta"
 	}
+	kind := "web"
+	if txn.Background {
+		kind = "background"
+	}
 
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	buckets, ok := a.windows[window]
+	w, ok := a.windows[windowTS]
 	if !ok {
-		buckets = make(map[store.Key]*store.Bucket)
-		a.windows[window] = buckets
+		w = store.NewWindow()
+		a.windows[windowTS] = w
 	}
 
-	key := store.Key{App: app, Txn: name, Category: categoryOf(txn)}
-	b, ok := buckets[key]
-	if !ok {
-		if len(buckets) >= a.maxNames {
-			key = store.Key{App: app, Txn: OverflowName, Category: key.Category}
-			b, ok = buckets[key]
-		}
-		if !ok {
-			b = &store.Bucket{MinNS: txn.DurationNano}
-			buckets[key] = b
-		}
-	}
+	name = a.applyCardinalityCap(w, app, kind, name)
 
-	b.Count++
+	// Totale della transazione.
+	total := bucketFor(w, store.Key{App: app, Txn: name, Kind: kind, Category: store.CategoriaTotale})
+	total.Count++
 	if isError(txn) {
-		b.Errors++
+		total.Errors++
 	}
-	b.SumNS += txn.DurationNano
-
+	total.SumNS += txn.DurationNano
 	ms := float64(txn.DurationNano) / 1e6
-	b.SumSqMS += ms * ms
+	total.SumSqMS += ms * ms
+	if total.Count == 1 || txn.DurationNano < total.MinNS {
+		total.MinNS = txn.DurationNano
+	}
+	if txn.DurationNano > total.MaxNS {
+		total.MaxNS = txn.DurationNano
+	}
+	total.Hist.Add(txn.DurationNano)
 
-	if txn.DurationNano < b.MinNS || b.Count == 1 {
-		b.MinNS = txn.DurationNano
+	// Scomposizione per categoria e dettaglio di query e host.
+	var dbNS, extNS uint64
+	for i := range txn.Spans {
+		span := &txn.Spans[i]
+		if isRoot(span) {
+			continue
+		}
+		failed := span.Status != 0
+
+		switch category, value := classify(span); category {
+		case store.CategoriaDatabase:
+			dbNS += span.DurationNano
+			sql := w.SQL[store.SQLKey{App: app, Statement: value}]
+			if sql == nil {
+				sql = &store.Simple{}
+				w.SQL[store.SQLKey{App: app, Statement: value}] = sql
+			}
+			sql.Add(span.DurationNano, failed)
+
+		case store.CategoriaEsterne:
+			extNS += span.DurationNano
+			host := w.Hosts[store.HostKey{App: app, Host: value}]
+			if host == nil {
+				host = &store.Simple{}
+				w.Hosts[store.HostKey{App: app, Host: value}] = host
+			}
+			host.Add(span.DurationNano, failed)
+		}
 	}
-	if txn.DurationNano > b.MaxNS {
-		b.MaxNS = txn.DurationNano
+
+	if dbNS > 0 {
+		addCategory(w, store.Key{App: app, Txn: name, Kind: kind, Category: store.CategoriaDatabase}, dbNS)
 	}
-	b.Hist.Add(txn.DurationNano)
+	if extNS > 0 {
+		addCategory(w, store.Key{App: app, Txn: name, Kind: kind, Category: store.CategoriaEsterne}, extNS)
+	}
 }
 
-func categoryOf(txn *protocol.Transaction) string {
-	if txn.Background {
-		return "background"
+// applyCardinalityCap fa confluire i nomi in eccesso in un nome di raccolta.
+// Senza questa valvola un'applicazione con URL generati riempie lo storage in
+// pochi giorni.
+func (a *Aggregator) applyCardinalityCap(w *store.Window, app, kind, name string) string {
+	key := store.Key{App: app, Txn: name, Kind: kind, Category: store.CategoriaTotale}
+	if _, seen := w.Metrics[key]; seen {
+		return name
 	}
-	return "web"
+	if len(w.Metrics) < a.maxNames {
+		return name
+	}
+	return OverflowName
+}
+
+func bucketFor(w *store.Window, key store.Key) *store.Bucket {
+	b := w.Metrics[key]
+	if b == nil {
+		b = &store.Bucket{}
+		w.Metrics[key] = b
+	}
+	return b
+}
+
+func addCategory(w *store.Window, key store.Key, durationNS uint64) {
+	b := bucketFor(w, key)
+	b.Count++
+	b.SumNS += durationNS
+	ms := float64(durationNS) / 1e6
+	b.SumSqMS += ms * ms
+	if b.Count == 1 || durationNS < b.MinNS {
+		b.MinNS = durationNS
+	}
+	if durationNS > b.MaxNS {
+		b.MaxNS = durationNS
+	}
+	b.Hist.Add(durationNS)
+}
+
+func isRoot(span *protocol.Span) bool {
+	return span.ParentSpanID == [8]byte{}
+}
+
+// classify riconosce la natura di uno span dai suoi attributi, non dal nome:
+// e' l'attributo a seguire le semantic conventions, il nome no.
+func classify(span *protocol.Span) (category, value string) {
+	for _, attr := range span.Attrs {
+		switch attr.Key {
+		case "db.statement":
+			return store.CategoriaDatabase, attr.Str
+		case "server.address":
+			return store.CategoriaEsterne, attr.Str
+		}
+	}
+	return "", ""
 }
 
 // isError considera errore un 5xx o una transazione che ha registrato errori
@@ -149,27 +228,28 @@ func (a *Aggregator) flush(all bool) {
 	current := now - now%WindowSeconds
 
 	a.mu.Lock()
-	ready := make(map[int64]map[store.Key]*store.Bucket)
-	for window, buckets := range a.windows {
-		if all || window < current {
-			ready[window] = buckets
-			delete(a.windows, window)
+	ready := make(map[int64]*store.Window)
+	for ts, w := range a.windows {
+		if all || ts < current {
+			ready[ts] = w
+			delete(a.windows, ts)
 		}
 	}
 	a.mu.Unlock()
 
-	for window, buckets := range ready {
-		if len(buckets) == 0 {
+	for ts, w := range ready {
+		if w.Empty() {
 			continue
 		}
-		if err := a.store.WriteMetrics(window, buckets); err != nil {
-			// I dati sono gia' stati rimossi dalla memoria: rimetterli
+		if err := a.store.WriteWindow(ts, w); err != nil {
+			// I dati sono gia' stati tolti dalla memoria: rimetterli
 			// significherebbe rischiare di crescere senza limite se il disco
 			// resta rotto. Si perde la finestra e lo si dice.
 			a.log.Error("scrittura delle metriche fallita, finestra persa",
-				"finestra", window, "chiavi", len(buckets), "errore", err)
+				"finestra", ts, "serie", len(w.Metrics), "errore", err)
 			continue
 		}
-		a.log.Debug("finestra scritta", "finestra", window, "chiavi", len(buckets))
+		a.log.Debug("finestra scritta", "finestra", ts,
+			"serie", len(w.Metrics), "query", len(w.SQL), "host", len(w.Hosts))
 	}
 }

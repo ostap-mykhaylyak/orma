@@ -15,6 +15,8 @@
 
 #include "php_orma.h"
 #include "orma_txn.h"
+#include "orma_span.h"
+#include "orma_hooks.h"
 #include "orma_proto.h"
 #include "orma_sender.h"
 
@@ -47,6 +49,7 @@ static PHP_GSHUTDOWN_FUNCTION(orma)
 		orma_globals->sock_fd = -1;
 	}
 	orma_buf_free(&orma_globals->buf);
+	orma_spans_free();
 }
 
 PHP_MINIT_FUNCTION(orma)
@@ -78,6 +81,12 @@ PHP_RINIT_FUNCTION(orma)
 		return SUCCESS;
 	}
 
+	/* Alla prima richiesta, non in MINIT: l'ordine di caricamento delle
+	 * estensioni non e' garantito, e PDO o curl potrebbero non essere ancora
+	 * registrate quando tocca a noi. */
+	orma_hooks_install();
+
+	orma_spans_reset();
 	orma_txn_begin();
 	return SUCCESS;
 }
@@ -90,6 +99,9 @@ PHP_RSHUTDOWN_FUNCTION(orma)
 		return SUCCESS;
 	}
 
+	/* Uno span ancora aperto significa che la funzione avvolta non e' tornata:
+	 * si chiude in errore prima di misurare la transazione. */
+	orma_spans_close_open();
 	orma_txn_end();
 
 	if (orma_proto_encode(txn, &ORMA_G(buf))) {

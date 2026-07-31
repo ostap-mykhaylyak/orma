@@ -1,0 +1,39 @@
+{{ template "intestazione" . }}
+
+  <div class="tiles">
+    <div class="tile"><div class="k">Query</div><div class="v">{{ num .Totale.Count }}</div></div>
+    <div class="tile"><div class="k">Tempo in database</div><div class="v">{{ seconds .Totale.TotalMS }}</div></div>
+    <div class="tile"><div class="k">Media</div><div class="v">{{ ms .Totale.AvgMS }}</div></div>
+    <div class="tile"><div class="k">Forme distinte</div><div class="v">{{ len .Query }}</div></div>
+  </div>
+
+  <h2>Query per tempo consumato</h2>
+  <div class="scroll">
+    {{ if .Query }}
+    <table>
+      <thead>
+        <tr><th>Statement</th><th>Esecuzioni</th><th>Tempo totale</th><th>Media</th><th>Massimo</th><th>Errori</th></tr>
+      </thead>
+      <tbody>
+        {{ range .Query }}
+        <tr>
+          <td class="sql">{{ .Statement }}</td>
+          <td class="n">{{ num .Count }}</td>
+          <td class="n">{{ seconds .TotalMS }}</td>
+          <td class="n">{{ ms .AvgMS }}</td>
+          <td class="n">{{ ms .MaxMS }}</td>
+          <td class="n">{{ num .Errors }}</td>
+        </tr>
+        {{ end }}
+      </tbody>
+    </table>
+    {{ else }}
+    <div class="empty">Nessuna query in questo intervallo.</div>
+    {{ end }}
+  </div>
+
+  <div class="legenda">
+    <span>I valori sono sostituiti da <code>?</code> dall'estensione, prima che la query lasci il processo PHP: i parametri non arrivano mai al daemon.</span>
+  </div>
+
+{{ template "chiusura" . }}

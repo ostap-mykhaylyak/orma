@@ -8,6 +8,9 @@
 void orma_buf_reset(orma_buf *b);
 void orma_buf_free(orma_buf *b);
 
+/* Accoda byte grezzi. Usata anche dall'arena degli span. */
+bool orma_buf_append(orma_buf *b, const void *src, size_t n);
+
 /* Codifica la transazione in un frame completo, lunghezza inclusa.
  * Restituisce false solo se l'allocazione fallisce. */
 bool orma_proto_encode(const orma_txn *txn, orma_buf *out);

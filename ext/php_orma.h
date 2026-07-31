@@ -29,6 +29,28 @@ extern zend_module_entry orma_module_entry;
  * telemetria e' sempre preferibile a rallentare l'utente. */
 #define ORMA_SEND_TIMEOUT_MS 5
 
+/* Tetto agli span per transazione. Oltre, si tronca e si conta: un trace
+ * troncato e dichiarato e' utile, uno troncato in silenzio e' una bugia. */
+#define ORMA_MAX_SPANS 2000
+
+#define ORMA_MAX_SPAN_ATTRS 3
+
+/* Lunghezza massima dello statement SQL conservato. */
+#define ORMA_MAX_STATEMENT 2000
+
+/* Tipi di attributo e di span, allineati a OpenTelemetry. */
+#define ORMA_ATTR_STRING 0
+#define ORMA_ATTR_INT64  1
+#define ORMA_ATTR_DOUBLE 2
+#define ORMA_ATTR_BOOL   3
+
+#define ORMA_SPAN_INTERNAL 0
+#define ORMA_SPAN_SERVER   1
+#define ORMA_SPAN_CLIENT   2
+
+#define ORMA_STATUS_OK    0
+#define ORMA_STATUS_ERROR 1
+
 #if defined(ZTS) && defined(COMPILE_DL_ORMA)
 ZEND_TSRMLS_CACHE_EXTERN()
 #endif
@@ -40,6 +62,31 @@ typedef struct _orma_buf {
 	size_t  len;
 	size_t  cap;
 } orma_buf;
+
+/* Attributo di span. Le chiavi sono stringhe statiche (semantic conventions);
+ * i valori stringa vivono nell'arena e sono referenziati per offset, perche'
+ * l'arena puo' essere rilocata da una realloc. */
+typedef struct _orma_attr {
+	const char *key;
+	uint8_t     type;
+	uint32_t    str_off;
+	uint32_t    str_len;
+	int64_t     i64;
+} orma_attr;
+
+typedef struct _orma_span {
+	uint8_t   span_id[ORMA_SPAN_ID_LEN];
+	uint32_t  name_off;
+	uint32_t  name_len;
+	uint8_t   kind;
+	uint8_t   status;
+	bool      open;
+	uint64_t  start_unix_nano;
+	uint64_t  start_monotonic_nano;
+	uint64_t  duration_nano;
+	uint8_t   attr_count;
+	orma_attr attrs[ORMA_MAX_SPAN_ATTRS];
+} orma_span;
 
 typedef struct _orma_txn {
 	bool     active;
@@ -87,6 +134,15 @@ ZEND_BEGIN_MODULE_GLOBALS(orma)
 
 	orma_buf buf;
 	orma_txn txn;
+
+	/* Span figli e arena delle stringhe: allocati una volta per processo,
+	 * azzerati a ogni richiesta. */
+	orma_span *spans;
+	uint32_t   span_count;
+	uint32_t   span_cap;
+	orma_buf   arena;
+
+	bool hooks_installed;
 ZEND_END_MODULE_GLOBALS(orma)
 
 /* I globals sono definiti in orma.c; gli altri file di traduzione li vedono

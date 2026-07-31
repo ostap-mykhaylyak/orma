@@ -207,7 +207,7 @@ func doStart(cfg config.Config, configPath string) error {
 	}
 	defer pf.Release()
 
-	st, err := store.Open(cfg.Database)
+	st, err := store.Open(cfg.Database, log)
 	if err != nil {
 		return err
 	}

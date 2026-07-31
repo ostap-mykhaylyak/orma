@@ -219,10 +219,13 @@ il traffico.
 
 ### Slow SQL
 
-Normalizzazione (`internal/sqlnorm`): literal → `?`, liste `IN (...)` collassate,
-whitespace compresso, commenti rimossi. Hash della forma normalizzata come chiave di
-aggregazione. Lo statement salvato è **sempre** quello normalizzato: i parametri non
-devono mai finire su disco.
+**L'offuscamento avviene nell'estensione, non nel daemon.** Il design iniziale lo
+metteva nel daemon; è stato spostato in `ext/orma_sql.c` perché è strettamente più
+sicuro: così i valori dei parametri non lasciano mai il processo PHP che li ha in mano,
+e il daemon non può scriverli su disco nemmeno per errore, nemmeno in un log di debug.
+
+L'estensione sostituisce letterali e numeri con `?`, rimuove i commenti e comprime gli
+spazi. Il daemon riceve solo la forma già offuscata, la hasha (FNV-1a) e la aggrega.
 
 ---
 
