@@ -72,10 +72,10 @@ static bool orma_is_fatal(int type)
 
 /* Registra un evento. I conteggi crescono sempre; il dettaglio si conserva
  * solo per i primi ORMA_MAX_ERRORS. */
-static void orma_error_record(const char *class, size_t class_len,
-                              const char *message, size_t message_len,
-                              const char *file, size_t file_len,
-                              uint32_t line, uint8_t severita)
+void orma_txn_record_event(const char *class, size_t class_len,
+                           const char *message, size_t message_len,
+                           const char *file, size_t file_len,
+                           uint32_t line, uint8_t severita)
 {
 	orma_txn *txn = &ORMA_G(txn);
 
@@ -115,7 +115,7 @@ static void orma_error_cb(int type, zend_string *file, uint32_t line, zend_strin
 {
 	const char *class = orma_error_class(type);
 
-	orma_error_record(class, strlen(class),
+	orma_txn_record_event(class, strlen(class),
 	                  message != NULL ? ZSTR_VAL(message) : "",
 	                  message != NULL ? ZSTR_LEN(message) : 0,
 	                  file != NULL ? ZSTR_VAL(file) : "",
@@ -140,7 +140,7 @@ static void orma_throw_hook(zend_object *exception)
 
 		/* Severita' avviso: l'eccezione potrebbe essere catturata subito dopo.
 		 * Se non lo sara', arrivera' comunque come E_ERROR da zend_error_cb. */
-		orma_error_record(
+		orma_txn_record_event(
 			ce != NULL ? ZSTR_VAL(ce->name) : "Exception",
 			ce != NULL ? ZSTR_LEN(ce->name) : 9,
 			(message != NULL && Z_TYPE_P(message) == IS_STRING) ? Z_STRVAL_P(message) : "",

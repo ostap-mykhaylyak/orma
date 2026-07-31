@@ -150,6 +150,47 @@ static uint32_t orma_intern_cstr(orma_strtab *t, const char *s)
 	return orma_intern(t, s, s ? strlen(s) : 0);
 }
 
+/* Interna chiavi e valori degli attributi aggiunti da userland. */
+static void orma_intern_custom(orma_strtab *tab, const orma_txn *txn)
+{
+	for (uint32_t i = 0; i < txn->custom_count; i++) {
+		const orma_custom_attr *attr = &txn->custom[i];
+		orma_intern(tab, orma_arena_str(attr->key_off), attr->key_len);
+		if (attr->type == ORMA_ATTR_STRING) {
+			orma_intern(tab, orma_arena_str(attr->str_off), attr->str_len);
+		}
+	}
+}
+
+static bool orma_emit_custom(orma_buf *out, orma_strtab *tab, const orma_txn *txn)
+{
+	for (uint32_t i = 0; i < txn->custom_count; i++) {
+		const orma_custom_attr *attr = &txn->custom[i];
+
+		if (!orma_put_u32(out, orma_intern(tab, orma_arena_str(attr->key_off), attr->key_len))) return false;
+		if (!orma_put_u8(out, attr->type)) return false;
+
+		switch (attr->type) {
+		case ORMA_ATTR_STRING:
+			if (!orma_put_u32(out, orma_intern(tab, orma_arena_str(attr->str_off), attr->str_len))) return false;
+			break;
+		case ORMA_ATTR_DOUBLE: {
+			uint64_t bits;
+			memcpy(&bits, &attr->dbl, sizeof(bits));
+			if (!orma_put_u64(out, bits)) return false;
+			break;
+		}
+		case ORMA_ATTR_BOOL:
+			if (!orma_put_u8(out, attr->i64 ? 1 : 0)) return false;
+			break;
+		default:
+			if (!orma_put_u64(out, (uint64_t)attr->i64)) return false;
+			break;
+		}
+	}
+	return true;
+}
+
 /* Interna le stringhe degli eventi di errore. */
 static void orma_intern_events(orma_strtab *tab, const orma_txn *txn)
 {
@@ -250,6 +291,7 @@ bool orma_proto_encode(const orma_txn *txn, orma_buf *out)
 
 	orma_intern_children(&tab);
 	orma_intern_events(&tab, txn);
+	orma_intern_custom(&tab, txn);
 
 	orma_buf_reset(out);
 
@@ -300,7 +342,7 @@ bool orma_proto_encode(const orma_txn *txn, orma_buf *out)
 	if (!orma_put_u64(out, txn->duration_nano)) return false;
 	if (!orma_put_u8(out, txn->errors > 0 ? ORMA_STATUS_ERROR : ORMA_STATUS_OK)) return false;
 
-	uint16_t attr_count = txn->background ? 1 : 2;
+	uint16_t attr_count = (txn->background ? 1 : 2) + (uint16_t)txn->custom_count;
 	if (!orma_put_u16(out, attr_count)) return false;
 
 	if (!txn->background) {
@@ -313,6 +355,7 @@ bool orma_proto_encode(const orma_txn *txn, orma_buf *out)
 	if (!orma_put_u8(out, ORMA_ATTR_INT64)) return false;
 	if (!orma_put_u64(out, txn->peak_memory)) return false;
 
+	if (!orma_emit_custom(out, &tab, txn)) return false;
 	if (!orma_emit_children(out, &tab, txn)) return false;
 	if (!orma_emit_events(out, &tab, txn)) return false;
 

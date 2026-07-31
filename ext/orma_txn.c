@@ -267,6 +267,11 @@ static void orma_name_background(orma_txn *txn)
 
 static void orma_txn_assign_name(orma_txn *txn)
 {
+	/* Nome deciso da userland: la denominazione automatica non lo tocca. */
+	if (txn->name_locked) {
+		return;
+	}
+
 	const char *uri = SG(request_info).request_uri;
 
 	if (uri == NULL || *uri == '\0') {

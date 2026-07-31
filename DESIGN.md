@@ -160,15 +160,24 @@ direttiva che prima o poi qualcuno mette a zero in produzione.
 ### API userland
 
 ```php
-orma_name_transaction(string $name): bool
-orma_ignore(): void
-orma_add_attribute(string $key, string|int|float|bool $value): bool
-orma_start_span(string $name, string $category = 'custom'): int
-orma_end_span(int $handle): bool
-orma_notice_error(string $message, ?Throwable $e = null): void
-orma_background_transaction(string $name): bool
+orma_name_transaction(string $nome): bool
+orma_background_transaction(string $nome): bool
+orma_ignore(): bool
+orma_add_attribute(string $chiave, string|int|float|bool $valore): bool
+orma_start_span(string $nome): int
+orma_end_span(int $riferimento): bool
+orma_notice_error(string $messaggio, ?Throwable $eccezione = null): bool
 orma_get_trace_id(): ?string
 ```
+
+**Nessuna di queste fallisce in modo visibile.** Con `orma.enabled = 0`, o fuori da una
+transazione, restituiscono un valore neutro senza warning né eccezioni: un'applicazione
+che le chiama non deve doverle proteggere con `function_exists()`.
+
+`orma_start_span` non prende una categoria, come previsto nella prima stesura. Le
+categorie si deducono dagli attributi semantici (`db.statement`, `server.address`), e
+lasciare che userland ne dichiari una permetterebbe di creare span che si dichiarano
+tempo di database senza avere una query dietro.
 
 ---
 

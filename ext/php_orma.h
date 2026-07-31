@@ -112,6 +112,19 @@ typedef struct _orma_span {
 #define ORMA_SEVERITA_AVVISO 0
 #define ORMA_SEVERITA_ERRORE 1
 
+/* Attributi aggiunti da userland con orma_add_attribute. A differenza di
+ * quelli degli span, la chiave e' una stringa dell'utente e non una costante,
+ * quindi vive nell'arena come il valore. */
+#define ORMA_MAX_CUSTOM_ATTRS 8
+
+typedef struct _orma_custom_attr {
+	uint32_t key_off, key_len;
+	uint8_t  type;
+	uint32_t str_off, str_len;
+	int64_t  i64;
+	double   dbl;
+} orma_custom_attr;
+
 typedef struct _orma_error {
 	uint32_t class_off, class_len;
 	uint32_t msg_off, msg_len;
@@ -124,6 +137,10 @@ typedef struct _orma_error {
 typedef struct _orma_txn {
 	bool     active;
 	bool     background;
+	/* Chiesta esplicitamente da orma_ignore: la transazione non viene inviata. */
+	bool     ignored;
+	/* Nome deciso da userland: la denominazione automatica non lo tocca. */
+	bool     name_locked;
 
 	uint8_t  trace_id[ORMA_TRACE_ID_LEN];
 	uint8_t  span_id[ORMA_SPAN_ID_LEN];
@@ -149,6 +166,9 @@ typedef struct _orma_txn {
 
 	orma_error events[ORMA_MAX_ERRORS];
 	uint32_t   event_count;
+
+	orma_custom_attr custom[ORMA_MAX_CUSTOM_ATTRS];
+	uint32_t         custom_count;
 } orma_txn;
 
 ZEND_BEGIN_MODULE_GLOBALS(orma)

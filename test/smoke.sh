@@ -62,6 +62,8 @@ foreach ([
   "/carico?esterna=1",
   "/carico?avvisi=1",
   "/guasto",
+  "/api",
+  "/silenzio",
 ] as $p) { @file_get_contents("http://127.0.0.1:8080" . $p); }
 '
 sleep 1
@@ -85,6 +87,19 @@ sleep 1
 echo
 echo "== transazioni viste dal daemon =="
 grep 'msg=transazione' /tmp/orma.log | sed -E 's/.*nome=([^ ]*).*span=([0-9]*)/  \1  (span: \2)/'
+
+echo
+echo "== controlli sull'API userland =="
+if grep -q 'nome=checkout/pagamento' /tmp/orma.log; then
+	echo "  orma_name_transaction: nome esplicito applicato"
+else
+	echo "  orma_name_transaction: FALLITO, nome non trovato"
+fi
+if grep -q 'nome=/silenzio' /tmp/orma.log; then
+	echo "  orma_ignore: FALLITO, la transazione e' stata inviata comunque"
+else
+	echo "  orma_ignore: la transazione non e' arrivata al daemon"
+fi
 
 echo
 grep -E 'msg=(ingestione|"frame malformato)' /tmp/orma.log

@@ -16,6 +16,7 @@
 #include "php_orma.h"
 #include "orma_txn.h"
 #include "orma_span.h"
+#include "orma_api.h"
 #include "orma_observer.h"
 #include "orma_error.h"
 #include "orma_hooks.h"
@@ -122,6 +123,11 @@ PHP_RSHUTDOWN_FUNCTION(orma)
 	orma_spans_close_open();
 	orma_txn_end();
 
+	if (txn->ignored) {
+		txn->active = false;
+		return SUCCESS;
+	}
+
 	if (orma_proto_encode(txn, &ORMA_G(buf))) {
 		orma_sender_send(ORMA_G(buf).data, ORMA_G(buf).len);
 	}
@@ -152,7 +158,7 @@ PHP_MINFO_FUNCTION(orma)
 zend_module_entry orma_module_entry = {
 	STANDARD_MODULE_HEADER,
 	"orma",
-	NULL,                      /* funzioni userland: arrivano al M6 */
+	orma_functions,
 	PHP_MINIT(orma),
 	PHP_MSHUTDOWN(orma),
 	PHP_RINIT(orma),
