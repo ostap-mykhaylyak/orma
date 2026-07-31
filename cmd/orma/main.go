@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -38,6 +39,10 @@ Uso:
   orma <verbo>            start | stop | reload | restart | status
   orma --init             genera la configurazione e installa l'estensione
   orma --purge            disinstalla l'estensione e rimuove dati e configurazione
+  orma --enable           riattiva la raccolta e la ricarica in php-fpm
+  orma --disable          sospende la raccolta senza disinstallare nulla
+  orma --export <dir>     genera le pagine come HTML statico, da consultare
+                          senza passare dal pannello
   orma --check-config     valida la configurazione ed esce
   orma --version          stampa la versione
   orma --help             stampa questo messaggio
@@ -68,6 +73,8 @@ type options struct {
 	extensionPath   string
 	phpBin          string
 	senzaEstensione bool
+	exportDir       string
+	minuti          int
 }
 
 func run(args []string) error {
@@ -87,6 +94,12 @@ func run(args []string) error {
 		return doInit(opts)
 	case "purge":
 		return doPurge(opts)
+	case "enable":
+		return doAbilita(opts, true)
+	case "disable":
+		return doAbilita(opts, false)
+	case "export":
+		return doExport(opts)
 	case "check-config":
 		return doCheckConfig(opts.configPath)
 	}
@@ -156,8 +169,31 @@ func parse(args []string) (options, error) {
 		case arg == "--senza-estensione":
 			opts.senzaEstensione = true
 
-		case arg == "--init", arg == "--purge", arg == "--check-config",
-			arg == "--version", arg == "--help":
+		case arg == "--export":
+			if i+1 >= len(args) {
+				return opts, errors.New("--export richiede una directory")
+			}
+			i++
+			opts.exportDir = args[i]
+			opts.action = "export"
+
+		case strings.HasPrefix(arg, "--export="):
+			opts.exportDir = strings.TrimPrefix(arg, "--export=")
+			opts.action = "export"
+
+		case arg == "--minuti":
+			if i+1 >= len(args) {
+				return opts, errors.New("--minuti richiede un numero")
+			}
+			i++
+			n, err := strconv.Atoi(args[i])
+			if err != nil || n <= 0 {
+				return opts, fmt.Errorf("--minuti vuole un numero positivo, non %q", args[i])
+			}
+			opts.minuti = n
+
+		case arg == "--init", arg == "--purge", arg == "--enable", arg == "--disable",
+			arg == "--check-config", arg == "--version", arg == "--help":
 			action := strings.TrimPrefix(arg, "--")
 			if opts.action != "" && opts.action != action {
 				return opts, fmt.Errorf("--%s e %s si escludono a vicenda", opts.action, arg)
@@ -249,6 +285,84 @@ func doInit(opts options) error {
 	if esito.Nota != "" {
 		fmt.Printf("Passo successivo: %s\n", esito.Nota)
 	}
+	return nil
+}
+
+// doAbilita accende o spegne la raccolta senza disinstallare nulla: utile per
+// sospenderla durante un intervento, o per riattivarla dopo.
+func doAbilita(opts options, attiva bool) error {
+	iniPath, err := install.TrovaIni(opts.phpBin)
+	if err != nil {
+		return err
+	}
+	if iniPath == "" {
+		return errors.New("estensione non installata: usa \"orma --init\"")
+	}
+
+	prima, err := install.Attiva(iniPath)
+	if err != nil {
+		return err
+	}
+	if prima == attiva {
+		fmt.Printf("La raccolta era gia' %s (%s).\n", statoTesto(attiva), iniPath)
+		return nil
+	}
+
+	if err := install.Abilita(iniPath, attiva); err != nil {
+		return err
+	}
+
+	fmt.Printf("Raccolta %s in %s\n", statoTesto(attiva), iniPath)
+	fmt.Printf("\nPerche' abbia effetto sulle richieste in corso serve ricaricare php-fpm:\n  %s\n",
+		install.ComandoRicarica(opts.phpBin))
+	if !attiva {
+		fmt.Print("\nL'estensione resta caricata ma non registra nemmeno l'observer:\n" +
+			"con la raccolta spenta il costo e' zero misurabile.\n")
+	}
+	return nil
+}
+
+func statoTesto(attiva bool) string {
+	if attiva {
+		return "attivata"
+	}
+	return "sospesa"
+}
+
+// doExport genera le pagine come file, per quando al pannello non si puo'
+// arrivare: niente proxy da configurare, niente porta da esporre.
+func doExport(opts options) error {
+	cfg, err := config.Load(opts.configPath)
+	if err != nil {
+		return err
+	}
+
+	st, err := store.Open(cfg.Database, nil, cfg.Retention())
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	minuti := opts.minuti
+	if minuti <= 0 {
+		minuti = 1440
+	}
+
+	srv, err := web.New(st, newLogger(cfg.LogLevel), web.Opzioni{
+		Addr:     cfg.Listen,
+		ApdexTMS: float64(cfg.ApdexTMS),
+	})
+	if err != nil {
+		return err
+	}
+
+	scritti, err := srv.Esporta(opts.exportDir, minuti)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("Scritti %d file in %s (ultimi %d minuti)\n", len(scritti), opts.exportDir, minuti)
+	fmt.Printf("Apri %s\n", filepath.Join(opts.exportDir, "panoramica.html"))
 	return nil
 }
 

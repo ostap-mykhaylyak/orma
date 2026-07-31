@@ -128,6 +128,94 @@ func rimuoviSeEsiste(percorso string) (string, error) {
 	return percorso, nil
 }
 
+// TrovaIni individua l'INI dell'estensione. Restituisce stringa vuota se non
+// e' installata.
+func TrovaIni(phpBin string) (string, error) {
+	if phpBin == "" {
+		phpBin = "php"
+	}
+	if _, err := exec.LookPath(phpBin); err != nil {
+		return "", fmt.Errorf("%s non trovato: indica l'interprete con --php", phpBin)
+	}
+
+	var candidati []string
+	if versione, err := valore(phpBin, `echo PHP_MAJOR_VERSION . "." . PHP_MINOR_VERSION;`); err == nil && versione != "" {
+		candidati = append(candidati, filepath.Join("/etc/php", versione, "mods-available", "orma.ini"))
+	}
+	if scan, err := directoryDiScansione(phpBin); err == nil {
+		candidati = append(candidati, filepath.Join(scan, "99-orma.ini"), filepath.Join(scan, "orma.ini"))
+	}
+
+	for _, c := range candidati {
+		if _, err := os.Stat(c); err == nil {
+			return c, nil
+		}
+	}
+	return "", nil
+}
+
+// Attiva indica se la raccolta e' abilitata nell'INI.
+func Attiva(iniPath string) (bool, error) {
+	contenuto, err := os.ReadFile(iniPath)
+	if err != nil {
+		return false, err
+	}
+	for _, riga := range strings.Split(string(contenuto), "\n") {
+		pulita := strings.TrimSpace(riga)
+		if valore, trovato := strings.CutPrefix(pulita, "orma.enabled"); trovato {
+			return strings.Contains(valore, "1"), nil
+		}
+	}
+	// Il default della direttiva e' 1: senza riga, la raccolta e' attiva.
+	return true, nil
+}
+
+// Abilita accende o spegne la raccolta agendo sull'INI.
+//
+// Non tocca il caricamento dell'estensione: si cambia orma.enabled, non
+// extension=. Cosi' spegnere non richiede che php sappia dove sta il .so e
+// riaccendere non puo' fallire perche' il file e' stato spostato. Con
+// orma.enabled=0 l'estensione resta caricata ma non registra nemmeno
+// l'observer, quindi il costo e' zero misurabile.
+func Abilita(iniPath string, attiva bool) error {
+	contenuto, err := os.ReadFile(iniPath)
+	if err != nil {
+		return fmt.Errorf("lettura di %s: %w", iniPath, err)
+	}
+
+	valore := "0"
+	if attiva {
+		valore = "1"
+	}
+
+	righe := strings.Split(string(contenuto), "\n")
+	sostituita := false
+	for i, riga := range righe {
+		if strings.HasPrefix(strings.TrimSpace(riga), "orma.enabled") {
+			righe[i] = "orma.enabled=" + valore
+			sostituita = true
+			break
+		}
+	}
+	if !sostituita {
+		righe = append(righe, "orma.enabled="+valore)
+	}
+
+	if err := os.WriteFile(iniPath, []byte(strings.Join(righe, "\n")), 0o644); err != nil {
+		return fmt.Errorf("scrittura di %s: %w", iniPath, err)
+	}
+	return nil
+}
+
+// ComandoRicarica suggerisce come far rileggere l'INI a php-fpm.
+func ComandoRicarica(phpBin string) string {
+	versione, err := valore(phpBin, `echo PHP_MAJOR_VERSION . "." . PHP_MINOR_VERSION;`)
+	if err != nil || versione == "" {
+		versione = "8.5"
+	}
+	return "systemctl reload php" + versione + "-fpm"
+}
+
 func accanto(nome string) (string, error) {
 	exe, err := os.Executable()
 	if err != nil {

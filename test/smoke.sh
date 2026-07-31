@@ -185,6 +185,19 @@ echo "transazione:$(wc -c </src/dist/transazione.html) byte"
 /src/dist/orma stop >/dev/null
 
 echo
+echo "== export statico =="
+/src/dist/orma --export /src/dist/export --minuti 60
+echo "file generati:"
+ls /src/dist/export | sed 's/^/  /' | head -12
+echo "collegamenti nella panoramica (devono essere relativi, non URL):"
+grep -o 'href="[^"]*"' /src/dist/export/panoramica.html | sort -u | sed 's/^/  /' | head -8
+if grep -q 'href="/' /src/dist/export/panoramica.html; then
+	echo "FALLITO: restano collegamenti assoluti"
+	exit 1
+fi
+echo "nessun collegamento assoluto"
+
+echo
 echo "== installazione dell'estensione =="
 # L'installatore vero: copia nella extension_dir, scrive l'INI e verifica che
 # php la carichi davvero. Il container e' usa e getta, quindi si puo' provare
@@ -192,3 +205,11 @@ echo "== installazione dell'estensione =="
 cp /src/ext/modules/orma.so /tmp/orma-da-installare.so
 rm -f /etc/orma/orma.yaml
 /src/dist/orma --init --extension /tmp/orma-da-installare.so
+
+echo
+echo "== sospensione e riattivazione della raccolta =="
+/src/dist/orma --disable
+grep '^orma.enabled' /etc/php/8.5/mods-available/orma.ini | sed 's/^/  ini: /'
+/src/dist/orma --disable | tail -1
+/src/dist/orma --enable
+grep '^orma.enabled' /etc/php/8.5/mods-available/orma.ini | sed 's/^/  ini: /'

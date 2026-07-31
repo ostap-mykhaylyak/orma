@@ -111,22 +111,30 @@
   </header>
 
   <nav>
-    <a href="/?minuti={{ .Minuti }}"         {{ if eq .Pagina "panoramica" }}class="on"{{ end }}>Panoramica</a>
-    <a href="/database?minuti={{ .Minuti }}" {{ if eq .Pagina "database" }}class="on"{{ end }}>Database</a>
-    <a href="/esterne?minuti={{ .Minuti }}"  {{ if eq .Pagina "esterne" }}class="on"{{ end }}>Esterne</a>
-    <a href="/errori?minuti={{ .Minuti }}"   {{ if eq .Pagina "errori" }}class="on"{{ end }}>Errori</a>
-    <a href="/tracce?minuti={{ .Minuti }}"   {{ if eq .Pagina "tracce" }}class="on"{{ end }}>Tracce</a>
-    <a href="/stato?minuti={{ .Minuti }}"    {{ if eq .Pagina "stato" }}class="on"{{ end }}>Stato</a>
+    <a href="{{ .Href "" }}"         {{ if eq .Pagina "panoramica" }}class="on"{{ end }}>Panoramica</a>
+    <a href="{{ .Href "database" }}" {{ if eq .Pagina "database" }}class="on"{{ end }}>Database</a>
+    <a href="{{ .Href "esterne" }}"  {{ if eq .Pagina "esterne" }}class="on"{{ end }}>Esterne</a>
+    <a href="{{ .Href "errori" }}"   {{ if eq .Pagina "errori" }}class="on"{{ end }}>Errori</a>
+    <a href="{{ .Href "tracce" }}"   {{ if eq .Pagina "tracce" }}class="on"{{ end }}>Tracce</a>
+    {{ if .MostraIntervalli }}
+    <a href="{{ .Href "stato" }}"    {{ if eq .Pagina "stato" }}class="on"{{ end }}>Stato</a>
+    {{ end }}
   </nav>
 
+  {{ if .MostraIntervalli }}
   <div class="intervalli">
-    <a href="?minuti=30"   {{ if eq .Minuti 30 }}class="on"{{ end }}>30 min</a>
-    <a href="?minuti=60"   {{ if eq .Minuti 60 }}class="on"{{ end }}>1 ora</a>
-    <a href="?minuti=360"  {{ if eq .Minuti 360 }}class="on"{{ end }}>6 ore</a>
-    <a href="?minuti=1440" {{ if eq .Minuti 1440 }}class="on"{{ end }}>24 ore</a>
-    <a href="?minuti=10080" {{ if eq .Minuti 10080 }}class="on"{{ end }}>7 giorni</a>
-    <a href="?minuti=43200" {{ if eq .Minuti 43200 }}class="on"{{ end }}>30 giorni</a>
+    <a href="{{ .HrefIntervallo 30 }}"    {{ if eq .Minuti 30 }}class="on"{{ end }}>30 min</a>
+    <a href="{{ .HrefIntervallo 60 }}"    {{ if eq .Minuti 60 }}class="on"{{ end }}>1 ora</a>
+    <a href="{{ .HrefIntervallo 360 }}"   {{ if eq .Minuti 360 }}class="on"{{ end }}>6 ore</a>
+    <a href="{{ .HrefIntervallo 1440 }}"  {{ if eq .Minuti 1440 }}class="on"{{ end }}>24 ore</a>
+    <a href="{{ .HrefIntervallo 10080 }}" {{ if eq .Minuti 10080 }}class="on"{{ end }}>7 giorni</a>
+    <a href="{{ .HrefIntervallo 43200 }}" {{ if eq .Minuti 43200 }}class="on"{{ end }}>30 giorni</a>
   </div>
+  {{ else }}
+  <div class="intervalli">
+    <span class="sub">Istantanea degli ultimi {{ .Minuti }} minuti, generata il {{ .Generato }}.</span>
+  </div>
+  {{ end }}
 {{ end }}
 
 {{ define "grafici" }}

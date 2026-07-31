@@ -32,7 +32,7 @@
         {{ range .Txns }}
         <tr>
           <td class="name">
-            <a class="riga" href="/transazione?nome={{ .Name }}&amp;minuti={{ $.Minuti }}">{{ .Name }}</a>
+            <a class="riga" href="{{ $.HrefTransazione .Name }}">{{ .Name }}</a>
             <span class="tag">{{ .Kind }}</span>
           </td>
           <td class="n">{{ num .Count }}</td>

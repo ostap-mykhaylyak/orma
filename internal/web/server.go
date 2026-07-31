@@ -9,7 +9,9 @@ import (
 	"html/template"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/ostap-mykhaylyak/orma/internal/store"
@@ -148,6 +150,10 @@ type comune struct {
 	Minuti   int
 	Version  string
 	Generato string
+	// Statico distingue le pagine servite da quelle esportate su file: le
+	// prime si collegano per URL, le seconde per nome di file, perche' un
+	// export si consulta aprendo un file, senza nessun server davanti.
+	Statico bool
 }
 
 func newComune(titolo, pagina string, minuti int) comune {
@@ -156,8 +162,72 @@ func newComune(titolo, pagina string, minuti int) comune {
 		Pagina:   pagina,
 		Minuti:   minuti,
 		Version:  version.Version,
-		Generato: time.Now().Format("15:04:05"),
+		Generato: time.Now().Format("2006-01-02 15:04:05"),
 	}
+}
+
+// Href e' il collegamento a una pagina. Stringa vuota per la panoramica.
+func (c comune) Href(pagina string) string {
+	if c.Statico {
+		if pagina == "" {
+			return "panoramica.html"
+		}
+		return pagina + ".html"
+	}
+	if pagina == "" {
+		return fmt.Sprintf("/?minuti=%d", c.Minuti)
+	}
+	return fmt.Sprintf("/%s?minuti=%d", pagina, c.Minuti)
+}
+
+// HrefIntervallo e' il selettore di finestra temporale, che in un export non
+// ha senso: i dati sono quelli congelati al momento della generazione.
+func (c comune) HrefIntervallo(minuti int) string {
+	return fmt.Sprintf("?minuti=%d", minuti)
+}
+
+// MostraIntervalli nasconde il selettore nelle pagine esportate.
+func (c comune) MostraIntervalli() bool {
+	return !c.Statico
+}
+
+func (c comune) HrefTraccia(id int64) string {
+	if c.Statico {
+		return fmt.Sprintf("traccia-%d.html", id)
+	}
+	return fmt.Sprintf("/traccia?id=%d&minuti=%d", id, c.Minuti)
+}
+
+func (c comune) HrefTransazione(nome string) string {
+	if c.Statico {
+		return "transazione-" + nomeFile(nome) + ".html"
+	}
+	return "/transazione?nome=" + url.QueryEscape(nome) + fmt.Sprintf("&minuti=%d", c.Minuti)
+}
+
+// nomeFile riduce un nome di transazione a qualcosa che si puo' scrivere su
+// disco su qualunque filesystem, restando riconoscibile a occhio.
+func nomeFile(nome string) string {
+	var b strings.Builder
+	for _, r := range nome {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('-')
+		}
+	}
+	ridotto := strings.Trim(b.String(), "-")
+	for strings.Contains(ridotto, "--") {
+		ridotto = strings.ReplaceAll(ridotto, "--", "-")
+	}
+	if ridotto == "" {
+		ridotto = "radice"
+	}
+	if len(ridotto) > 80 {
+		ridotto = ridotto[:80]
+	}
+	return ridotto
 }
 
 // riepilogo e' l'aggregato mostrato nelle caselle delle pagine di dettaglio.
@@ -199,6 +269,11 @@ type datiEsterne struct {
 	Host   []store.HostStat
 }
 
+// sinceDaMinuti converte una finestra in timestamp di partenza.
+func sinceDaMinuti(minuti int) int64 {
+	return time.Now().Add(-time.Duration(minuti) * time.Minute).Unix()
+}
+
 // intervallo legge la finestra temporale richiesta, con un'ora come default.
 func intervallo(r *http.Request) (minuti int, since int64) {
 	minuti = 60
@@ -207,35 +282,89 @@ func intervallo(r *http.Request) (minuti int, since int64) {
 			minuti = n
 		}
 	}
-	return minuti, time.Now().Add(-time.Duration(minuti) * time.Minute).Unix()
+	return minuti, sinceDaMinuti(minuti)
+}
+
+// I costruttori sono separati dagli handler perche' servono a due padroni: le
+// pagine servite e quelle esportate su file.
+
+func (s *Server) costruisciPanoramica(since int64, c comune) (datiPanoramica, error) {
+	var out datiPanoramica
+
+	summary, err := s.store.Summary(since, s.apdexTMS)
+	if err != nil {
+		return out, fmt.Errorf("riepilogo: %w", err)
+	}
+	txns, err := s.store.TopTransactions(since, 50)
+	if err != nil {
+		return out, fmt.Errorf("classifica delle transazioni: %w", err)
+	}
+	punti, passo, err := s.store.Serie(since, "")
+	if err != nil {
+		return out, fmt.Errorf("serie temporale: %w", err)
+	}
+
+	return datiPanoramica{comune: c, Summary: summary, Txns: txns,
+		Grafico: costruisciGrafico(punti, passo)}, nil
+}
+
+func (s *Server) costruisciTransazione(since int64, nome string, c comune) (datiTransazione, error) {
+	var out datiTransazione
+
+	dettaglio, err := s.store.Dettaglio(since, nome)
+	if err != nil {
+		return out, fmt.Errorf("dettaglio della transazione: %w", err)
+	}
+	punti, passo, err := s.store.Serie(since, nome)
+	if err != nil {
+		return out, fmt.Errorf("serie della transazione: %w", err)
+	}
+	tracce, err := s.store.TracceDi(since, nome, 25)
+	if err != nil {
+		return out, fmt.Errorf("trace della transazione: %w", err)
+	}
+
+	return datiTransazione{comune: c, Dettaglio: dettaglio,
+		Grafico: costruisciGrafico(punti, passo), Tracce: tracce}, nil
+}
+
+func (s *Server) costruisciDatabase(since int64, c comune) (datiDatabase, error) {
+	query, err := s.store.SlowSQL(since, 100)
+	if err != nil {
+		return datiDatabase{}, fmt.Errorf("query lente: %w", err)
+	}
+
+	var totale riepilogo
+	for _, q := range query {
+		totale.Count += q.Count
+		totale.TotalMS += q.TotalMS
+	}
+	return datiDatabase{comune: c, Totale: totale, Query: query}, nil
+}
+
+func (s *Server) costruisciEsterne(since int64, c comune) (datiEsterne, error) {
+	host, err := s.store.Externals(since, 100)
+	if err != nil {
+		return datiEsterne{}, fmt.Errorf("chiamate esterne: %w", err)
+	}
+
+	var totale riepilogo
+	for _, h := range host {
+		totale.Count += h.Count
+		totale.TotalMS += h.TotalMS
+	}
+	return datiEsterne{comune: c, Totale: totale, Host: host}, nil
 }
 
 func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 	minuti, since := intervallo(r)
 
-	summary, err := s.store.Summary(since, s.apdexTMS)
+	dati, err := s.costruisciPanoramica(since, newComune("Panoramica", "panoramica", minuti))
 	if err != nil {
-		s.fail(w, "riepilogo", err)
+		s.fail(w, err)
 		return
 	}
-	txns, err := s.store.TopTransactions(since, 50)
-	if err != nil {
-		s.fail(w, "classifica delle transazioni", err)
-		return
-	}
-
-	punti, passo, err := s.store.Serie(since, "")
-	if err != nil {
-		s.fail(w, "serie temporale", err)
-		return
-	}
-
-	s.render(w, "panoramica.html", datiPanoramica{
-		comune:  newComune("Panoramica", "panoramica", minuti),
-		Summary: summary,
-		Txns:    txns,
-		Grafico: costruisciGrafico(punti, passo),
-	})
+	s.render(w, "panoramica.html", dati)
 }
 
 func (s *Server) handleTransaction(w http.ResponseWriter, r *http.Request) {
@@ -247,72 +376,34 @@ func (s *Server) handleTransaction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	dettaglio, err := s.store.Dettaglio(since, nome)
+	dati, err := s.costruisciTransazione(since, nome, newComune(nome, "panoramica", minuti))
 	if err != nil {
-		s.fail(w, "dettaglio della transazione", err)
+		s.fail(w, err)
 		return
 	}
-	punti, passo, err := s.store.Serie(since, nome)
-	if err != nil {
-		s.fail(w, "serie della transazione", err)
-		return
-	}
-	tracce, err := s.store.TracceDi(since, nome, 25)
-	if err != nil {
-		s.fail(w, "trace della transazione", err)
-		return
-	}
-
-	s.render(w, "transazione.html", datiTransazione{
-		comune:    newComune(nome, "panoramica", minuti),
-		Dettaglio: dettaglio,
-		Grafico:   costruisciGrafico(punti, passo),
-		Tracce:    tracce,
-	})
+	s.render(w, "transazione.html", dati)
 }
 
 func (s *Server) handleDatabase(w http.ResponseWriter, r *http.Request) {
 	minuti, since := intervallo(r)
 
-	query, err := s.store.SlowSQL(since, 100)
+	dati, err := s.costruisciDatabase(since, newComune("Database", "database", minuti))
 	if err != nil {
-		s.fail(w, "query lente", err)
+		s.fail(w, err)
 		return
 	}
-
-	var totale riepilogo
-	for _, q := range query {
-		totale.Count += q.Count
-		totale.TotalMS += q.TotalMS
-	}
-
-	s.render(w, "database.html", datiDatabase{
-		comune: newComune("Database", "database", minuti),
-		Totale: totale,
-		Query:  query,
-	})
+	s.render(w, "database.html", dati)
 }
 
 func (s *Server) handleExternals(w http.ResponseWriter, r *http.Request) {
 	minuti, since := intervallo(r)
 
-	host, err := s.store.Externals(since, 100)
+	dati, err := s.costruisciEsterne(since, newComune("Esterne", "esterne", minuti))
 	if err != nil {
-		s.fail(w, "chiamate esterne", err)
+		s.fail(w, err)
 		return
 	}
-
-	var totale riepilogo
-	for _, h := range host {
-		totale.Count += h.Count
-		totale.TotalMS += h.TotalMS
-	}
-
-	s.render(w, "esterne.html", datiEsterne{
-		comune: newComune("Esterne", "esterne", minuti),
-		Totale: totale,
-		Host:   host,
-	})
+	s.render(w, "esterne.html", dati)
 }
 
 type datiErrori struct {
@@ -322,13 +413,10 @@ type datiErrori struct {
 	Avvisi  uint64
 }
 
-func (s *Server) handleErrors(w http.ResponseWriter, r *http.Request) {
-	minuti, since := intervallo(r)
-
+func (s *Server) costruisciErrori(since int64, c comune) (datiErrori, error) {
 	errori, err := s.store.Errors(since, 100)
 	if err != nil {
-		s.fail(w, "elenco degli errori", err)
-		return
+		return datiErrori{}, fmt.Errorf("elenco degli errori: %w", err)
 	}
 
 	var fatali, avvisi uint64
@@ -339,13 +427,18 @@ func (s *Server) handleErrors(w http.ResponseWriter, r *http.Request) {
 			avvisi += e.Count
 		}
 	}
+	return datiErrori{comune: c, Errori: errori, Fatali: fatali, Avvisi: avvisi}, nil
+}
 
-	s.render(w, "errori.html", datiErrori{
-		comune: newComune("Errori", "errori", minuti),
-		Errori: errori,
-		Fatali: fatali,
-		Avvisi: avvisi,
-	})
+func (s *Server) handleErrors(w http.ResponseWriter, r *http.Request) {
+	minuti, since := intervallo(r)
+
+	dati, err := s.costruisciErrori(since, newComune("Errori", "errori", minuti))
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	s.render(w, "errori.html", dati)
 }
 
 type datiTracce struct {
@@ -359,19 +452,31 @@ type datiTraccia struct {
 	Righe   []store.Riga
 }
 
+func (s *Server) costruisciTracce(since int64, c comune) (datiTracce, error) {
+	tracce, err := s.store.Traces(since, 100)
+	if err != nil {
+		return datiTracce{}, fmt.Errorf("elenco dei trace: %w", err)
+	}
+	return datiTracce{comune: c, Tracce: tracce}, nil
+}
+
+func (s *Server) costruisciTraccia(id int64, c comune) (datiTraccia, error) {
+	traccia, err := s.store.Trace(id)
+	if err != nil {
+		return datiTraccia{}, err
+	}
+	return datiTraccia{comune: c, Traccia: traccia, Righe: traccia.Waterfall()}, nil
+}
+
 func (s *Server) handleTraces(w http.ResponseWriter, r *http.Request) {
 	minuti, since := intervallo(r)
 
-	tracce, err := s.store.Traces(since, 100)
+	dati, err := s.costruisciTracce(since, newComune("Tracce", "tracce", minuti))
 	if err != nil {
-		s.fail(w, "elenco dei trace", err)
+		s.fail(w, err)
 		return
 	}
-
-	s.render(w, "tracce.html", datiTracce{
-		comune: newComune("Tracce", "tracce", minuti),
-		Tracce: tracce,
-	})
+	s.render(w, "tracce.html", dati)
 }
 
 func (s *Server) handleTrace(w http.ResponseWriter, r *http.Request) {
@@ -383,17 +488,14 @@ func (s *Server) handleTrace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	traccia, err := s.store.Trace(id)
+	dati, err := s.costruisciTraccia(id, newComune("Trace", "tracce", minuti))
 	if err != nil {
 		http.Error(w, "trace non trovato", http.StatusNotFound)
 		return
 	}
+	dati.Titolo = "Trace " + dati.Traccia.Name
 
-	s.render(w, "traccia.html", datiTraccia{
-		comune:  newComune("Trace "+traccia.Name, "tracce", minuti),
-		Traccia: traccia,
-		Righe:   traccia.Waterfall(),
-	})
+	s.render(w, "traccia.html", dati)
 }
 
 func (s *Server) render(w http.ResponseWriter, name string, data any) {
@@ -403,7 +505,7 @@ func (s *Server) render(w http.ResponseWriter, name string, data any) {
 	}
 }
 
-func (s *Server) fail(w http.ResponseWriter, what string, err error) {
-	s.log.Error("query fallita", "cosa", what, "errore", err)
-	http.Error(w, "errore nel recupero dei dati: "+what, http.StatusInternalServerError)
+func (s *Server) fail(w http.ResponseWriter, err error) {
+	s.log.Error("recupero dei dati fallito", "errore", err)
+	http.Error(w, "errore nel recupero dei dati", http.StatusInternalServerError)
 }

@@ -57,6 +57,19 @@ sudo orma stop
 sudo orma --purge
 ```
 
+## Comandi
+
+| | |
+|---|---|
+| `orma start\|stop\|reload\|restart\|status` | il servizio |
+| `orma --init` | configura, installa l'estensione, genera il token |
+| `orma --purge` | disinstalla tutto e cancella i dati |
+| `orma --enable` / `orma --disable` | sospende e riattiva la raccolta |
+| `orma --export <dir>` | genera le pagine come HTML statico |
+| `orma --check-config` | valida la configurazione |
+
+I verbi di servizio si scrivono senza trattini, tutto il resto con i trattini.
+
 ## Cosa vedi
 
 | Pagina | Cosa mostra |
@@ -99,6 +112,93 @@ daemon lo segnala all'avvio.
 
 `/salute` resta sempre accessibile: serve a un supervisore per sapere se il processo
 risponde, e non espone dati raccolti.
+
+### Il pannello dietro nginx
+
+orma ascolta solo su `127.0.0.1`: per raggiungerlo dall'esterno serve un proxy. Il
+blocco minimo, da mettere in un `server` già esistente:
+
+```nginx
+location /orma/ {
+    proxy_pass http://127.0.0.1:8737/;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+
+    # Il token viaggia in chiaro: senza TLS davanti, esponi il pannello
+    # solo su una rete di cui ti fidi.
+    proxy_read_timeout 30s;
+}
+```
+
+Su un sottodominio dedicato, che è più pulito perché evita di dover riscrivere i
+percorsi:
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name orma.esempio.it;
+
+    ssl_certificate     /etc/letsencrypt/live/orma.esempio.it/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/orma.esempio.it/privkey.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:8737;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+Per Apache:
+
+```apache
+<Location /orma/>
+    ProxyPass        http://127.0.0.1:8737/
+    ProxyPassReverse http://127.0.0.1:8737/
+</Location>
+```
+
+Un accorgimento: il token passato come `?token=` finisce nei log di accesso del proxy.
+Usalo una volta sola per farti impostare il cookie, oppure passa l'header `Authorization`.
+
+### Senza proxy: l'HTML statico
+
+Quando il proxy non si può mettere — container chiuso, rete non raggiungibile, accesso
+solo via SSH — le pagine si generano come file:
+
+```bash
+orma --export /tmp/orma-report --minuti 1440
+```
+
+Produce `panoramica.html` e tutte le altre, più il dettaglio delle transazioni più
+pesanti e i trace conservati, con i **collegamenti relativi**: la directory si copia
+dove serve e i link continuano a funzionare. Nessun server, nessun token, nessuna porta.
+
+```bash
+# generare e portarsi via il tutto in un colpo solo
+orma --export /tmp/orma-report --minuti 1440
+tar czf orma-report.tar.gz -C /tmp orma-report
+
+# oppure direttamente dalla macchina locale
+ssh server 'orma --export /tmp/r --minuti 1440 && tar cz -C /tmp r' | tar xz
+```
+
+I dati sono congelati al momento della generazione, quindi il selettore di intervallo
+sparisce e al suo posto compare la data: un selettore che rimanda a pagine inesistenti
+sarebbe peggio che non averlo.
+
+### Sospendere la raccolta
+
+```bash
+orma --disable    # sospende, senza disinstallare
+orma --enable     # riattiva
+```
+
+Agiscono su `orma.enabled` nell'INI, non su `extension=`: spegnere non richiede che PHP
+sappia dove sta il `.so`, e riaccendere non può fallire perché il file è stato spostato.
+Con la raccolta spenta l'estensione resta caricata ma non registra nemmeno l'observer,
+quindi il costo è zero misurabile. Entrambi ti ricordano il comando per ricaricare
+php-fpm, che serve perché l'INI venga riletto.
 
 ### Allarmi
 

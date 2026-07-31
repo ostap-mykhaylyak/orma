@@ -10,7 +10,7 @@
       <tbody>
         {{ range .Tracce }}
         <tr {{ if .HasError }}class="errore"{{ end }}>
-          <td class="name"><a class="riga" href="/traccia?id={{ .ID }}">{{ .Name }}</a><span class="tag">{{ .Kind }}</span></td>
+          <td class="name"><a class="riga" href="{{ $.HrefTraccia .ID }}">{{ .Name }}</a><span class="tag">{{ .Kind }}</span></td>
           <td class="n">{{ orario .TS }}</td>
           <td class="n">{{ ms .DurationMS }}</td>
           <td class="n">{{ if .HTTPStatus }}{{ .HTTPStatus }}{{ else }}&mdash;{{ end }}</td>
