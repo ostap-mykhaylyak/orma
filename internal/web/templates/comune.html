@@ -65,6 +65,21 @@
   .legenda .db::before  { background: var(--db); }
   .legenda .ext::before { background: var(--ext); }
   .empty { padding: 2.5rem 1rem; text-align: center; color: var(--muted); }
+
+  /* Waterfall */
+  .wf td { vertical-align: middle; }
+  .wf .etichetta { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .8rem; }
+  .wf .traccia { position: relative; height: 16px; background: var(--bg);
+                 border-radius: 3px; min-width: 220px; }
+  .wf .traccia i { position: absolute; top: 3px; height: 10px; border-radius: 2px; min-width: 2px; }
+  .wf .traccia i.php { background: var(--accent); }
+  .wf .traccia i.db  { background: var(--db); }
+  .wf .traccia i.ext { background: var(--ext); }
+  .wf .stmt { color: var(--muted); font-size: .74rem; display: block;
+              max-width: 60ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .wf tr.errore .etichetta { color: var(--err); }
+  a.riga { color: inherit; text-decoration: none; box-shadow: 0 1px 0 var(--line); }
+  a.riga:hover { box-shadow: 0 1px 0 var(--accent); }
   footer { margin-top: 2.5rem; color: var(--muted); font-size: .78rem; }
 </style>
 </head>
@@ -80,6 +95,7 @@
     <a href="/?minuti={{ .Minuti }}"         {{ if eq .Pagina "panoramica" }}class="on"{{ end }}>Panoramica</a>
     <a href="/database?minuti={{ .Minuti }}" {{ if eq .Pagina "database" }}class="on"{{ end }}>Database</a>
     <a href="/esterne?minuti={{ .Minuti }}"  {{ if eq .Pagina "esterne" }}class="on"{{ end }}>Esterne</a>
+    <a href="/tracce?minuti={{ .Minuti }}"   {{ if eq .Pagina "tracce" }}class="on"{{ end }}>Tracce</a>
   </nav>
 
   <div class="intervalli">

@@ -12,6 +12,14 @@ void orma_spans_free(void);
 int  orma_span_open(const char *name, size_t name_len, uint8_t kind);
 void orma_span_close(int idx, uint8_t status);
 
+/* Registra uno span gia' concluso, con identificativi e tempi decisi dal
+ * chiamante. La usa l'observer, che sa solo alla fine se lo span va emesso. */
+void orma_span_record(const char *name, size_t name_len, uint8_t kind,
+                      const uint8_t span_id[ORMA_SPAN_ID_LEN],
+                      const uint8_t parent_id[ORMA_SPAN_ID_LEN],
+                      uint64_t start_unix_nano, uint64_t duration_nano,
+                      uint8_t status);
+
 void orma_span_attr_str(int idx, const char *key, const char *value, size_t len);
 void orma_span_attr_int(int idx, const char *key, int64_t value);
 

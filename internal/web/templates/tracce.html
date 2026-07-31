@@ -1,0 +1,30 @@
+{{ template "intestazione" . }}
+
+  <h2>Trace conservati</h2>
+  <div class="scroll">
+    {{ if .Tracce }}
+    <table>
+      <thead>
+        <tr><th>Transazione</th><th>Quando</th><th>Durata</th><th>Stato</th><th>Span</th></tr>
+      </thead>
+      <tbody>
+        {{ range .Tracce }}
+        <tr {{ if .HasError }}class="errore"{{ end }}>
+          <td class="name"><a class="riga" href="/traccia?id={{ .ID }}">{{ .Name }}</a><span class="tag">{{ .Kind }}</span></td>
+          <td class="n">{{ orario .TS }}</td>
+          <td class="n">{{ ms .DurationMS }}</td>
+          <td class="n">{{ if .HTTPStatus }}{{ .HTTPStatus }}{{ else }}&mdash;{{ end }}</td>
+          <td class="n">{{ .Spans }}</td>
+        </tr>
+        {{ end }}
+      </tbody>
+    </table>
+    {{ else }}
+    <div class="empty">
+      Nessun trace conservato in questo intervallo.<br>
+      Si conservano solo le transazioni sopra <code>trace_threshold_ms</code> e quelle in errore.
+    </div>
+    {{ end }}
+  </div>
+
+{{ template "chiusura" . }}

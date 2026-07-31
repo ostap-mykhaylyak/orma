@@ -11,11 +11,16 @@
 #   7. tutto arriva su SQLite e torna indietro nella UI.
 set -e
 
-EXT="-d extension=/src/ext/modules/orma.so -d orma.app_name=prova"
+# detail=2 instrumenta ogni funzione utente: in produzione il default e' 1,
+# che emette uno span solo sopra soglia. Qui serve vedere il waterfall intero.
+EXT="-d extension=/src/ext/modules/orma.so -d orma.app_name=prova -d orma.detail=2"
 
 echo "== preparazione =="
 /src/dist/orma --init >/dev/null
 sed -i 's|#log_level: info|log_level: debug|' /etc/orma/orma.yaml
+# Soglia a zero: nella prova le richieste durano pochi millisecondi e con la
+# soglia di produzione non si conserverebbe alcun trace.
+echo 'trace_threshold_ms: 0' >>/etc/orma/orma.yaml
 /src/dist/orma --check-config >/dev/null && echo "configurazione valida"
 
 cat >/tmp/lavoro.php <<'PHP'
@@ -99,13 +104,32 @@ sqlite3 -header -column /var/lib/orma/orma.db \
 	   FROM externals ORDER BY sum_ns DESC;" 2>/dev/null || echo "(tabella assente)"
 
 echo
+echo "== trace conservati =="
+sqlite3 -header -column /var/lib/orma/orma.db \
+	"SELECT id, txn_name, ROUND(duration_ns/1e6,2) AS ms, json_array_length(spans) AS span
+	   FROM traces ORDER BY duration_ns DESC LIMIT 5;" 2>/dev/null || echo "(tabella assente)"
+
+echo
+echo "== waterfall del trace piu' lento =="
+sqlite3 /var/lib/orma/orma.db \
+	"SELECT json_extract(value,'\$.n') || '  ' || ROUND(json_extract(value,'\$.d')/1e6,3) || ' ms'
+	   FROM traces, json_each(traces.spans)
+	  WHERE traces.id = (SELECT id FROM traces ORDER BY duration_ns DESC LIMIT 1)
+	  ORDER BY json_extract(value,'\$.o');" 2>/dev/null | head -20
+
+echo
 echo "== la UI rilegge dal database =="
 /src/dist/orma start 2>>/tmp/orma.log &
 sleep 1
 php -r 'echo @file_get_contents("http://127.0.0.1:8737/?minuti=60");' >/src/dist/panoramica.html
 php -r 'echo @file_get_contents("http://127.0.0.1:8737/database?minuti=60");' >/src/dist/database.html
 php -r 'echo @file_get_contents("http://127.0.0.1:8737/esterne?minuti=60");' >/src/dist/esterne.html
+php -r 'echo @file_get_contents("http://127.0.0.1:8737/tracce?minuti=60");' >/src/dist/tracce.html
+id=$(sqlite3 /var/lib/orma/orma.db "SELECT id FROM traces ORDER BY duration_ns DESC LIMIT 1;")
+php -r "echo @file_get_contents('http://127.0.0.1:8737/traccia?id=$id');" >/src/dist/traccia.html
 echo "panoramica: $(wc -c </src/dist/panoramica.html) byte"
 echo "database:   $(wc -c </src/dist/database.html) byte"
 echo "esterne:    $(wc -c </src/dist/esterne.html) byte"
+echo "tracce:     $(wc -c </src/dist/tracce.html) byte"
+echo "traccia:    $(wc -c </src/dist/traccia.html) byte"
 /src/dist/orma stop >/dev/null

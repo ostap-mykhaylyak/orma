@@ -18,6 +18,7 @@
 #include "orma_span.h"
 #include "orma_proto.h"
 #include "orma_txn.h"
+#include "orma_observer.h"
 
 #include <string.h>
 
@@ -108,6 +109,9 @@ int orma_span_open(const char *name, size_t name_len, uint8_t kind)
 
 	memset(span, 0, sizeof(*span));
 	orma_rng_fill(span->span_id, ORMA_SPAN_ID_LEN);
+	/* Sotto la funzione utente che sta eseguendo, non appesa alla radice:
+	 * cosi' nel waterfall la query sta dentro il metodo che l'ha lanciata. */
+	orma_observer_current_parent(span->parent_span_id);
 	orma_arena_put(name, name_len, &span->name_off, &span->name_len);
 
 	span->kind = kind;
@@ -151,6 +155,34 @@ void orma_spans_close_open(void)
 			orma_span_close((int)i, ORMA_STATUS_ERROR);
 		}
 	}
+}
+
+void orma_span_record(const char *name, size_t name_len, uint8_t kind,
+                      const uint8_t span_id[ORMA_SPAN_ID_LEN],
+                      const uint8_t parent_id[ORMA_SPAN_ID_LEN],
+                      uint64_t start_unix_nano, uint64_t duration_nano,
+                      uint8_t status)
+{
+	if (!ORMA_G(txn).active) {
+		return;
+	}
+	if (!orma_spans_room()) {
+		ORMA_G(txn).spans_dropped++;
+		return;
+	}
+
+	orma_span *span = &ORMA_G(spans)[ORMA_G(span_count)++];
+
+	memset(span, 0, sizeof(*span));
+	memcpy(span->span_id, span_id, ORMA_SPAN_ID_LEN);
+	memcpy(span->parent_span_id, parent_id, ORMA_SPAN_ID_LEN);
+	orma_arena_put(name, name_len, &span->name_off, &span->name_len);
+
+	span->kind = kind;
+	span->status = status;
+	span->open = false;
+	span->start_unix_nano = start_unix_nano;
+	span->duration_nano = duration_nano;
 }
 
 void orma_span_attr_str(int idx, const char *key, const char *value, size_t len)

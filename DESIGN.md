@@ -105,11 +105,23 @@ sempre, anche se la nostra logica fallisce.
 
 ### Instrumentazione delle funzioni utente
 
-Via `zend_observer_fcall_register`, con policy configurabile:
+Via `zend_observer_fcall_register`, che registra gli handler **una volta per `op_array`**
+e non a ogni chiamata: è per questo che si può osservare tutto il codice utente senza
+sostituire `zend_execute_ex`.
 
-- `orma.detail = 0` (default): si osservano solo i frame di primo livello e le funzioni
-  che superano una soglia di durata. Overhead target < 3%.
-- `orma.detail = 1`: si osserva tutto. Utile per un'analisi puntuale, non per il continuo.
+Il costo resta però reale — due letture di orologio per chiamata di funzione — da cui
+tre livelli invece dei due previsti inizialmente:
+
+| `orma.detail` | Comportamento |
+|---|---|
+| `0` | nessun observer registrato, costo zero |
+| `1` (default) | si cronometra solo entro `orma.max_depth`, e si emette uno span solo sopra `orma.function_ms` |
+| `2` | si emette ogni chiamata, fino al tetto degli span |
+
+**Perché la soglia non produce span orfani:** la durata di un genitore è sempre maggiore
+o uguale a quella di ogni suo discendente. Se un genitore sta sotto soglia, ci stanno
+anche tutti i figli, e nessuno di loro è stato emesso. Gli orfani restano possibili solo
+quando è il tetto degli span a troncare, e la UI li riattacca alla radice.
 
 ### Errori
 
@@ -129,16 +141,21 @@ Via `zend_observer_fcall_register`, con policy configurabile:
 ### Configurazione (`orma.ini`)
 
 ```ini
-orma.enabled          = 1
-orma.app_name         = "sito-produzione"
-orma.socket           = "/run/orma/orma.sock"
-orma.detail           = 0
-orma.sample_rate      = 1.0
-orma.slow_sql_ms      = 50
-orma.trace_threshold_ms = 500
-orma.obfuscate_sql    = 1      ; mai disattivabile in produzione
-orma.max_spans        = 2000
+orma.enabled     = 1
+orma.app_name    = "sito-produzione"
+orma.socket      = "/run/orma/orma.sock"
+orma.detail      = 1     ; 0 nessuna, 1 solo sopra soglia, 2 tutto
+orma.function_ms = 5     ; soglia per detail = 1
+orma.max_depth   = 5     ; profondita' oltre la quale non si cronometra
 ```
+
+Soglie di campionamento, conservazione dei trace e tetto di cardinalità stanno invece
+nella configurazione del daemon (`orma.yaml`): sono decisioni di raccolta, non di
+instrumentazione, e cambiarle non deve richiedere un riavvio di php-fpm.
+
+**L'offuscamento SQL non è configurabile.** Era previsto come direttiva
+`orma.obfuscate_sql`; è stato tolto perché una direttiva che si può mettere a zero è una
+direttiva che prima o poi qualcuno mette a zero in produzione.
 
 ### API userland
 

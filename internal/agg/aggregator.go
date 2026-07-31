@@ -6,6 +6,8 @@ package agg
 
 import (
 	"context"
+	"encoding/hex"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -25,29 +27,44 @@ const flushInterval = 15 * time.Second
 // OverflowName raccoglie le transazioni oltre il limite di cardinalita'.
 const OverflowName = "OtherTransaction/*"
 
+// Options regola cardinalita' e campionamento dei trace.
+type Options struct {
+	// MaxNames e' il tetto ai nomi di transazione distinti per finestra.
+	MaxNames int
+	// TraceThresholdNS e' la durata sopra la quale un trace viene conservato
+	// per intero. Le transazioni in errore si conservano comunque.
+	TraceThresholdNS uint64
+	// TraceMaxPerWindow limita quanti trace si conservano al minuto.
+	TraceMaxPerWindow int
+}
+
+func (o Options) withDefaults() Options {
+	if o.MaxNames <= 0 {
+		o.MaxNames = 5000
+	}
+	if o.TraceMaxPerWindow <= 0 {
+		o.TraceMaxPerWindow = 20
+	}
+	return o
+}
+
 // Aggregator accumula in memoria e riversa su store a finestra chiusa.
 type Aggregator struct {
 	store *store.Store
 	log   *slog.Logger
+	opts  Options
 
 	mu      sync.Mutex
 	windows map[int64]*store.Window
-
-	// Valvola contro l'esplosione di cardinalita': oltre questo numero di nomi
-	// distinti per finestra, i nuovi confluiscono in un nome di raccolta.
-	maxNames int
 }
 
 // New costruisce un aggregatore.
-func New(st *store.Store, log *slog.Logger, maxNames int) *Aggregator {
-	if maxNames <= 0 {
-		maxNames = 5000
-	}
+func New(st *store.Store, log *slog.Logger, opts Options) *Aggregator {
 	return &Aggregator{
-		store:    st,
-		log:      log,
-		windows:  make(map[int64]*store.Window),
-		maxNames: maxNames,
+		store:   st,
+		log:     log,
+		opts:    opts.withDefaults(),
+		windows: make(map[int64]*store.Window),
 	}
 }
 
@@ -141,6 +158,64 @@ func (a *Aggregator) Add(txn *protocol.Transaction) {
 	if extNS > 0 {
 		addCategory(w, store.Key{App: app, Txn: name, Kind: kind, Category: store.CategoriaEsterne}, extNS)
 	}
+
+	// Il trace completo si conserva solo se e' lento o se e' andato male: e'
+	// questa regola che tiene lo storage proporzionale al numero di
+	// transazioni distinte invece che al traffico.
+	if a.keepTrace(txn, w) {
+		w.Traces = append(w.Traces, buildTrace(txn, app, name, kind, ts))
+	}
+}
+
+func (a *Aggregator) keepTrace(txn *protocol.Transaction, w *store.Window) bool {
+	if len(w.Traces) >= a.opts.TraceMaxPerWindow {
+		return false
+	}
+	return isError(txn) || txn.DurationNano >= a.opts.TraceThresholdNS
+}
+
+func buildTrace(txn *protocol.Transaction, app, name, kind string, ts int64) *store.Trace {
+	t := &store.Trace{
+		App:        app,
+		Name:       name,
+		Kind:       kind,
+		TS:         ts,
+		DurationNS: txn.DurationNano,
+		HTTPStatus: txn.HTTPStatus,
+		HasError:   isError(txn),
+		Spans:      make([]store.TraceSpan, 0, len(txn.Spans)),
+	}
+
+	for i := range txn.Spans {
+		span := &txn.Spans[i]
+
+		// L'inizio e' relativo a quello della transazione. Un orologio
+		// leggermente indietro produrrebbe un offset negativo: si azzera.
+		var offset uint64
+		if span.StartUnixNano > txn.StartUnixNano {
+			offset = span.StartUnixNano - txn.StartUnixNano
+		}
+
+		ts := store.TraceSpan{
+			ID:       hex.EncodeToString(span.SpanID[:]),
+			Name:     span.Name,
+			Kind:     uint8(span.Kind),
+			OffsetNS: offset,
+			DurNS:    span.DurationNano,
+			Status:   span.Status,
+		}
+		if !isRoot(span) {
+			ts.Parent = hex.EncodeToString(span.ParentSpanID[:])
+		}
+		if len(span.Attrs) > 0 {
+			ts.Attrs = make(map[string]string, len(span.Attrs))
+			for _, attr := range span.Attrs {
+				ts.Attrs[attr.Key] = fmt.Sprint(attr.Value())
+			}
+		}
+		t.Spans = append(t.Spans, ts)
+	}
+	return t
 }
 
 // applyCardinalityCap fa confluire i nomi in eccesso in un nome di raccolta.
@@ -151,7 +226,7 @@ func (a *Aggregator) applyCardinalityCap(w *store.Window, app, kind, name string
 	if _, seen := w.Metrics[key]; seen {
 		return name
 	}
-	if len(w.Metrics) < a.maxNames {
+	if len(w.Metrics) < a.opts.MaxNames {
 		return name
 	}
 	return OverflowName
@@ -250,6 +325,7 @@ func (a *Aggregator) flush(all bool) {
 			continue
 		}
 		a.log.Debug("finestra scritta", "finestra", ts,
-			"serie", len(w.Metrics), "query", len(w.SQL), "host", len(w.Hosts))
+			"serie", len(w.Metrics), "query", len(w.SQL),
+			"host", len(w.Hosts), "trace", len(w.Traces))
 	}
 }

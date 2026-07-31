@@ -1,0 +1,47 @@
+{{ template "intestazione" . }}
+
+  <div class="tiles">
+    <div class="tile"><div class="k">Transazione</div><div class="v" style="font-size:1rem">{{ .Traccia.Name }}</div></div>
+    <div class="tile"><div class="k">Durata</div><div class="v">{{ ms .Traccia.DurationMS }}</div></div>
+    <div class="tile"><div class="k">Stato</div>
+      <div class="v {{ if .Traccia.HasError }}err{{ end }}">{{ if .Traccia.HTTPStatus }}{{ .Traccia.HTTPStatus }}{{ else }}&mdash;{{ end }}</div></div>
+    <div class="tile"><div class="k">Span</div><div class="v">{{ len .Traccia.Spans }}</div></div>
+  </div>
+
+  <h2>Waterfall</h2>
+  <div class="scroll">
+    {{ if .Righe }}
+    <table class="wf">
+      <thead>
+        <tr><th>Span</th><th style="width:45%">Andamento</th><th>Inizio</th><th>Durata</th></tr>
+      </thead>
+      <tbody>
+        {{ range .Righe }}
+        <tr {{ if .Span.Status }}class="errore"{{ end }}>
+          <td>
+            <span class="etichetta" style="padding-left:{{ indent .Depth }}rem">{{ .Span.Name }}</span>
+            {{ with .Statement }}<span class="stmt">{{ . }}</span>{{ end }}
+          </td>
+          <td>
+            <div class="traccia">
+              <i class="{{ .Categoria }}" style="left:{{ pct .OffsetPct }}%; width:{{ pct .WidthPct }}%"></i>
+            </div>
+          </td>
+          <td class="n">{{ offset .Span.OffsetNS }}</td>
+          <td class="n">{{ ms .DurMS }}</td>
+        </tr>
+        {{ end }}
+      </tbody>
+    </table>
+    {{ else }}
+    <div class="empty">Questo trace non contiene span.</div>
+    {{ end }}
+  </div>
+
+  <div class="legenda">
+    <span class="php">PHP</span>
+    <span class="db">database</span>
+    <span class="ext">chiamate esterne</span>
+  </div>
+
+{{ template "chiusura" . }}

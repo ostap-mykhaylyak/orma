@@ -36,6 +36,17 @@ func New(addr string, st *store.Store, log *slog.Logger) (*Server, error) {
 		"rate":    func(v float64) string { return fmt.Sprintf("%.1f/min", v) },
 		"seconds": func(v float64) string { return fmt.Sprintf("%.2f s", v/1000) },
 		"quota":   quota,
+		"pct":     func(v float64) string { return strconv.FormatFloat(v, 'f', 3, 64) },
+		"offset":  func(ns uint64) string { return fmt.Sprintf("+%.1f ms", float64(ns)/1e6) },
+		"orario":  func(ts int64) string { return time.Unix(ts, 0).Format("15:04:05") },
+		// Il rientro del waterfall e' limitato: un albero profondo non deve
+		// spingere i nomi fuori dalla colonna.
+		"indent": func(depth int) string {
+			if depth > 8 {
+				depth = 8
+			}
+			return strconv.FormatFloat(float64(depth)*0.9, 'f', 2, 64)
+		},
 	}
 
 	tmpl, err := template.New("").Funcs(funcs).ParseFS(templatesFS, "templates/*.html")
@@ -49,6 +60,8 @@ func New(addr string, st *store.Store, log *slog.Logger) (*Server, error) {
 	mux.HandleFunc("GET /{$}", s.handleOverview)
 	mux.HandleFunc("GET /database", s.handleDatabase)
 	mux.HandleFunc("GET /esterne", s.handleExternals)
+	mux.HandleFunc("GET /tracce", s.handleTraces)
+	mux.HandleFunc("GET /traccia", s.handleTrace)
 	mux.HandleFunc("GET /salute", s.handleHealth)
 
 	s.http = &http.Server{
@@ -217,6 +230,54 @@ func (s *Server) handleExternals(w http.ResponseWriter, r *http.Request) {
 		comune: newComune("Esterne", "esterne", minuti),
 		Totale: totale,
 		Host:   host,
+	})
+}
+
+type datiTracce struct {
+	comune
+	Tracce []store.TraceRow
+}
+
+type datiTraccia struct {
+	comune
+	Traccia *store.Trace
+	Righe   []store.Riga
+}
+
+func (s *Server) handleTraces(w http.ResponseWriter, r *http.Request) {
+	minuti, since := intervallo(r)
+
+	tracce, err := s.store.Traces(since, 100)
+	if err != nil {
+		s.fail(w, "elenco dei trace", err)
+		return
+	}
+
+	s.render(w, "tracce.html", datiTracce{
+		comune: newComune("Tracce", "tracce", minuti),
+		Tracce: tracce,
+	})
+}
+
+func (s *Server) handleTrace(w http.ResponseWriter, r *http.Request) {
+	minuti, _ := intervallo(r)
+
+	id, err := strconv.ParseInt(r.URL.Query().Get("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "identificativo del trace non valido", http.StatusBadRequest)
+		return
+	}
+
+	traccia, err := s.store.Trace(id)
+	if err != nil {
+		http.Error(w, "trace non trovato", http.StatusNotFound)
+		return
+	}
+
+	s.render(w, "traccia.html", datiTraccia{
+		comune:  newComune("Trace "+traccia.Name, "tracce", minuti),
+		Traccia: traccia,
+		Righe:   traccia.Waterfall(),
 	})
 }
 

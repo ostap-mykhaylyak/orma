@@ -16,6 +16,7 @@
 #include "php_orma.h"
 #include "orma_txn.h"
 #include "orma_span.h"
+#include "orma_observer.h"
 #include "orma_hooks.h"
 #include "orma_proto.h"
 #include "orma_sender.h"
@@ -31,6 +32,14 @@ PHP_INI_BEGIN()
 		app_name, zend_orma_globals, orma_globals)
 	STD_PHP_INI_ENTRY("orma.socket", "/run/orma/orma.sock", PHP_INI_SYSTEM, OnUpdateString,
 		socket_path, zend_orma_globals, orma_globals)
+	/* 0 nessuna instrumentazione delle funzioni utente, 1 solo sopra soglia,
+	 * 2 tutto. Vedi ext/orma_observer.c. */
+	STD_PHP_INI_ENTRY("orma.detail", "1", PHP_INI_SYSTEM, OnUpdateLong,
+		detail, zend_orma_globals, orma_globals)
+	STD_PHP_INI_ENTRY("orma.function_ms", "5", PHP_INI_SYSTEM, OnUpdateLong,
+		function_ms, zend_orma_globals, orma_globals)
+	STD_PHP_INI_ENTRY("orma.max_depth", "5", PHP_INI_SYSTEM, OnUpdateLong,
+		max_depth, zend_orma_globals, orma_globals)
 PHP_INI_END()
 
 static PHP_GINIT_FUNCTION(orma)
@@ -50,6 +59,7 @@ static PHP_GSHUTDOWN_FUNCTION(orma)
 	}
 	orma_buf_free(&orma_globals->buf);
 	orma_spans_free();
+	orma_observer_free();
 }
 
 PHP_MINIT_FUNCTION(orma)
@@ -60,6 +70,10 @@ PHP_MINIT_FUNCTION(orma)
 		strcpy(ORMA_G(hostname), "sconosciuto");
 	}
 	ORMA_G(hostname)[sizeof(ORMA_G(hostname)) - 1] = '\0';
+
+	/* La registrazione dell'observer e' di processo e va fatta prima che
+	 * qualunque op_array venga compilato: qui e' l'unico posto giusto. */
+	orma_observer_register();
 
 	return SUCCESS;
 }
@@ -87,6 +101,7 @@ PHP_RINIT_FUNCTION(orma)
 	orma_hooks_install();
 
 	orma_spans_reset();
+	orma_observer_reset();
 	orma_txn_begin();
 	return SUCCESS;
 }

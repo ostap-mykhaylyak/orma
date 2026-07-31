@@ -175,9 +175,7 @@ static bool orma_emit_children(orma_buf *out, orma_strtab *tab, const orma_txn *
 
 		if (!orma_buf_append(out, txn->trace_id, ORMA_TRACE_ID_LEN)) return false;
 		if (!orma_buf_append(out, span->span_id, ORMA_SPAN_ID_LEN)) return false;
-		/* Tutti appesi alla radice: le funzioni interne instrumentate non si
-		 * chiamano fra loro, quindi al M2 non c'e' annidamento da ricostruire. */
-		if (!orma_buf_append(out, txn->span_id, ORMA_SPAN_ID_LEN)) return false;
+		if (!orma_buf_append(out, span->parent_span_id, ORMA_SPAN_ID_LEN)) return false;
 
 		if (!orma_put_u32(out, orma_intern(tab, orma_arena_str(span->name_off), span->name_len))) return false;
 		if (!orma_put_u8(out, span->kind)) return false;

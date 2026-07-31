@@ -22,7 +22,7 @@ import (
 // schemaVersion cambia a ogni modifica incompatibile delle tabelle. Prima
 // della 1.0 le tabelle vengono ricreate invece di essere migrate: i dati di
 // telemetria sono rimpiazzabili, il codice di migrazione no.
-const schemaVersion = 2
+const schemaVersion = 3
 
 // Categorie di metrica.
 const (
@@ -91,6 +91,7 @@ type Window struct {
 	Metrics map[Key]*Bucket
 	SQL     map[SQLKey]*Simple
 	Hosts   map[HostKey]*Simple
+	Traces  []*Trace
 }
 
 // NewWindow costruisce una finestra vuota.
@@ -104,7 +105,7 @@ func NewWindow() *Window {
 
 // Empty indica se non c'e' nulla da scrivere.
 func (w *Window) Empty() bool {
-	return len(w.Metrics) == 0 && len(w.SQL) == 0 && len(w.Hosts) == 0
+	return len(w.Metrics) == 0 && len(w.SQL) == 0 && len(w.Hosts) == 0 && len(w.Traces) == 0
 }
 
 // Store e' l'accesso al database.
@@ -206,7 +207,7 @@ func migrate(db *sql.DB, log *slog.Logger) error {
 			log.Warn("schema del database obsoleto, le metriche esistenti vengono scartate",
 				"trovata", current, "attesa", schemaVersion)
 		}
-		for _, t := range []string{"metrics_1m", "slow_sql", "externals"} {
+		for _, t := range []string{"metrics_1m", "slow_sql", "externals", "traces"} {
 			if _, err := db.Exec(`DROP TABLE IF EXISTS ` + t); err != nil {
 				return fmt.Errorf("rimozione di %s: %w", t, err)
 			}
@@ -215,6 +216,9 @@ func migrate(db *sql.DB, log *slog.Logger) error {
 
 	if _, err := db.Exec(schema); err != nil {
 		return fmt.Errorf("creazione dello schema: %w", err)
+	}
+	if _, err := db.Exec(traceSchema); err != nil {
+		return fmt.Errorf("creazione dello schema dei trace: %w", err)
 	}
 	if _, err := db.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, schemaVersion)); err != nil {
 		return fmt.Errorf("scrittura di user_version: %w", err)
@@ -295,6 +299,11 @@ func (s *Store) WriteWindow(window int64, w *Window) error {
 			return err
 		}
 	}
+	for _, t := range w.Traces {
+		if err := resolve(t.App); err != nil {
+			return err
+		}
+	}
 
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -328,6 +337,13 @@ func (s *Store) WriteWindow(window int64, w *Window) error {
 			ids[key.App], window, key.Host, "", v); err != nil {
 			return err
 		}
+	}
+
+	if err := writeTraces(func(q string, args ...any) error {
+		_, err := tx.Exec(q, args...)
+		return err
+	}, ids, w.Traces); err != nil {
+		return err
 	}
 
 	return tx.Commit()

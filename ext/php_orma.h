@@ -74,8 +74,18 @@ typedef struct _orma_attr {
 	int64_t     i64;
 } orma_attr;
 
+/* Profondita' massima della pila dell'observer. Oltre, i frame non vengono
+ * tracciati ma restano contati, perche' begin ed end devono restare in pari. */
+#define ORMA_MAX_STACK 512
+
+/* Valori di orma.detail. */
+#define ORMA_DETAIL_OFF    0  /* nessuna instrumentazione delle funzioni utente */
+#define ORMA_DETAIL_SOGLIA 1  /* solo le funzioni che superano la soglia */
+#define ORMA_DETAIL_TUTTO  2  /* ogni chiamata */
+
 typedef struct _orma_span {
 	uint8_t   span_id[ORMA_SPAN_ID_LEN];
+	uint8_t   parent_span_id[ORMA_SPAN_ID_LEN];
 	uint32_t  name_off;
 	uint32_t  name_len;
 	uint8_t   kind;
@@ -116,9 +126,12 @@ typedef struct _orma_txn {
 
 ZEND_BEGIN_MODULE_GLOBALS(orma)
 	/* Direttive INI. */
-	bool   enabled;
-	char  *app_name;
-	char  *socket_path;
+	bool      enabled;
+	char     *app_name;
+	char     *socket_path;
+	zend_long detail;
+	zend_long function_ms;
+	zend_long max_depth;
 
 	/* Stato di processo: il socket e' per worker, mai ereditato. */
 	int    sock_fd;
@@ -141,6 +154,12 @@ ZEND_BEGIN_MODULE_GLOBALS(orma)
 	uint32_t   span_count;
 	uint32_t   span_cap;
 	orma_buf   arena;
+
+	/* Pila dell'observer sulle funzioni utente. */
+	struct _orma_frame *stack;
+	uint32_t            depth;
+	uint32_t            stack_cap;
+	uint32_t            skipped;
 
 	bool hooks_installed;
 ZEND_END_MODULE_GLOBALS(orma)

@@ -216,7 +216,11 @@ func doStart(cfg config.Config, configPath string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	aggregator := agg.New(st, log, 0)
+	aggregator := agg.New(st, log, agg.Options{
+		MaxNames:          cfg.MaxTxnNames,
+		TraceThresholdNS:  uint64(cfg.TraceThresholdMS) * 1e6,
+		TraceMaxPerWindow: cfg.TraceMaxPerMin,
+	})
 	aggDone := make(chan struct{})
 	go func() {
 		defer close(aggDone)

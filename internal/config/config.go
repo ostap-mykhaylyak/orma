@@ -25,6 +25,13 @@ type Config struct {
 	Listen string `yaml:"listen"`
 	// LogLevel e' uno fra debug, info, warn, error.
 	LogLevel string `yaml:"log_level"`
+	// TraceThresholdMS e' la durata sopra la quale si conserva il trace
+	// completo. Le transazioni in errore si conservano comunque.
+	TraceThresholdMS int `yaml:"trace_threshold_ms"`
+	// TraceMaxPerMin limita quanti trace si conservano al minuto.
+	TraceMaxPerMin int `yaml:"trace_max_per_min"`
+	// MaxTxnNames e' il tetto ai nomi di transazione distinti per minuto.
+	MaxTxnNames int `yaml:"max_txn_names"`
 }
 
 // Default restituisce la configurazione predefinita.
@@ -35,6 +42,10 @@ func Default() Config {
 		Database: "/var/lib/orma/orma.db",
 		Listen:   "127.0.0.1:8737",
 		LogLevel: "info",
+
+		TraceThresholdMS: 500,
+		TraceMaxPerMin:   20,
+		MaxTxnNames:      5000,
 	}
 }
 
@@ -83,6 +94,15 @@ func (c Config) Validate() error {
 	default:
 		return fmt.Errorf("log_level %q non valido: usa debug, info, warn o error", c.LogLevel)
 	}
+	if c.TraceThresholdMS < 0 {
+		return fmt.Errorf("trace_threshold_ms non puo' essere negativo")
+	}
+	if c.TraceMaxPerMin <= 0 {
+		return fmt.Errorf("trace_max_per_min deve essere maggiore di zero")
+	}
+	if c.MaxTxnNames <= 0 {
+		return fmt.Errorf("max_txn_names deve essere maggiore di zero")
+	}
 	return nil
 }
 
@@ -106,4 +126,17 @@ const Template = `# Configurazione di orma.
 
 # Verbosita': debug, info, warn, error.
 #log_level: info
+
+# Durata oltre la quale si conserva il trace completo, in millisecondi.
+# Le transazioni in errore si conservano comunque. A 0 si conserva tutto,
+# utile solo per una diagnosi puntuale.
+#trace_threshold_ms: 500
+
+# Quanti trace conservare al massimo per minuto.
+#trace_max_per_min: 20
+
+# Tetto ai nomi di transazione distinti per minuto: oltre, i nuovi
+# confluiscono in OtherTransaction/*. E' la valvola che impedisce a
+# un'applicazione con URL generati di riempire il database.
+#max_txn_names: 5000
 `
