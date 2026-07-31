@@ -1,0 +1,68 @@
+{{ template "intestazione" . }}
+
+  <div class="tiles">
+    <div class="tile"><div class="k">Richieste</div><div class="v">{{ num .Dettaglio.Count }}</div></div>
+    <div class="tile"><div class="k">Media</div><div class="v">{{ ms .Dettaglio.AvgMS }}</div></div>
+    <div class="tile"><div class="k">p95</div><div class="v">{{ ms .Dettaglio.P95MS }}</div></div>
+    <div class="tile"><div class="k">p99</div><div class="v">{{ ms .Dettaglio.P99MS }}</div></div>
+    <div class="tile"><div class="k">Massimo</div><div class="v">{{ ms .Dettaglio.MaxMS }}</div></div>
+    <div class="tile">
+      <div class="k">Errori</div>
+      <div class="v {{ if gt .Dettaglio.Errors 0 }}err{{ end }}">{{ perc .Dettaglio.ErrorRate }}</div>
+    </div>
+  </div>
+
+  {{ template "grafici" .Grafico }}
+
+  <h2>Dove va il tempo</h2>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>Categoria</th><th>Tempo totale</th><th>Per richiesta</th><th>Quota</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>PHP</td>
+          <td class="n">{{ seconds .Dettaglio.PHPMS }}</td>
+          <td class="n">{{ ms (perRichiesta .Dettaglio.PHPMS .Dettaglio.Count) }}</td>
+          <td class="n">{{ quota .Dettaglio.PHPMS .Dettaglio.TotalMS }}%</td>
+        </tr>
+        <tr>
+          <td>Database</td>
+          <td class="n">{{ seconds .Dettaglio.DBMS }}</td>
+          <td class="n">{{ ms (perRichiesta .Dettaglio.DBMS .Dettaglio.Count) }}</td>
+          <td class="n">{{ quota .Dettaglio.DBMS .Dettaglio.TotalMS }}%</td>
+        </tr>
+        <tr>
+          <td>Chiamate esterne</td>
+          <td class="n">{{ seconds .Dettaglio.ExtMS }}</td>
+          <td class="n">{{ ms (perRichiesta .Dettaglio.ExtMS .Dettaglio.Count) }}</td>
+          <td class="n">{{ quota .Dettaglio.ExtMS .Dettaglio.TotalMS }}%</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2>Trace conservati</h2>
+  <div class="scroll">
+    {{ if .Tracce }}
+    <table>
+      <thead><tr><th>Quando</th><th>Durata</th><th>Stato</th><th>Span</th></tr></thead>
+      <tbody>
+        {{ range .Tracce }}
+        <tr {{ if .HasError }}class="errore"{{ end }}>
+          <td><a class="riga" href="/traccia?id={{ .ID }}">{{ orario .TS }}</a></td>
+          <td class="n">{{ ms .DurationMS }}</td>
+          <td class="n">{{ if .HTTPStatus }}{{ .HTTPStatus }}{{ else }}&mdash;{{ end }}</td>
+          <td class="n">{{ .Spans }}</td>
+        </tr>
+        {{ end }}
+      </tbody>
+    </table>
+    {{ else }}
+    <div class="empty">
+      Nessun trace conservato per questa transazione nell'intervallo.<br>
+      Si conservano le esecuzioni sopra soglia, quelle in errore e la pi&ugrave; lenta del minuto.
+    </div>
+    {{ end }}
+  </div>
+
+{{ template "chiusura" . }}

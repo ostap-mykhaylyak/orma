@@ -17,7 +17,7 @@ extern zend_module_entry orma_module_entry;
  * protocol.Version nel daemon. Alzata a 2 dal M4, che aggiunge la sezione
  * degli errori in coda al frame: un daemon vecchio rifiuta il frame con un
  * messaggio chiaro invece di interpretarlo male. */
-#define ORMA_PROTOCOL_VERSION 2
+#define ORMA_PROTOCOL_VERSION 3
 
 /* Errori conservati per transazione. Oltre, si contano soltanto: cento
  * warning identici non aggiungono informazione. */
@@ -190,7 +190,12 @@ ZEND_BEGIN_MODULE_GLOBALS(orma)
 	pid_t  sock_pid;
 
 	uint64_t sent_frames;
-	uint64_t dropped_frames;
+	/* Frame persi dall'ultima consegna riuscita. Viaggiano dentro il frame
+	 * successivo: e' l'unico modo perche' il daemon sappia quanto non gli e'
+	 * arrivato. Azzerato a ogni consegna riuscita. */
+	uint32_t dropped_frames;
+	/* Totale di processo, solo per phpinfo. */
+	uint64_t dropped_total;
 
 	uint64_t rng[4];
 	bool     rng_seeded;
@@ -212,6 +217,11 @@ ZEND_BEGIN_MODULE_GLOBALS(orma)
 	uint32_t            depth;
 	uint32_t            stack_cap;
 	uint32_t            skipped;
+
+	/* Statement preparati: dall'handle dell'oggetto mysqli_stmt all'SQL gia'
+	 * offuscato nell'arena. All'esecuzione lo statement non e' piu'
+	 * accessibile, va catturato alla preparazione. */
+	HashTable *stmt_map;
 
 	bool hooks_installed;
 ZEND_END_MODULE_GLOBALS(orma)

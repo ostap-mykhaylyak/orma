@@ -85,6 +85,16 @@ Poi un **limite globale di cardinalità** nel daemon: oltre X nomi distinti per 
 una finestra, i nuovi confluiscono in `OtherTransaction/*`. Senza questa valvola prima
 o poi ti si riempie lo storage.
 
+**Da dove si legge l'URI.** Non da `SG(request_info).request_uri`: su php-fpm quel campo
+contiene lo `SCRIPT_NAME`, non l'URI richiesto. Con un front controller — cioè con
+WordPress, Laravel, Symfony e qualunque applicazione moderna — *tutte* le pagine
+diventerebbero `/index.php` e le metriche non direbbero più nulla. È esattamente ciò che
+succedeva, ed è emerso solo provando su php-fpm vero.
+
+L'URI si legge da `REQUEST_URI` nell'ambiente della richiesta, con `sapi_getenv`, che non
+costringe a materializzare `$_SERVER`. Il vecchio campo resta come ripiego per i SAPI che
+non espongono l'ambiente.
+
 Override esplicito da userland con `orma_name_transaction()`.
 
 ### Instrumentazione delle funzioni interne
@@ -339,16 +349,63 @@ Retention di default: `metrics_1m` 24h, `metrics_5m` 7g, `metrics_1h` 395g,
 
 | Pagina | Contenuto |
 |---|---|
-| Panoramica | throughput, response time (p50/p95/p99), error rate, apdex |
-| Transazioni | classifica per **tempo totale consumato**, non per durata media |
-| Dettaglio transazione | breakdown per categoria nel tempo, lista dei trace campionati |
+| Panoramica | andamento nel tempo, throughput, p50/p95/p99, error rate, apdex, classifica delle transazioni |
+| Transazione | l'andamento di una singola pagina, dove va il suo tempo, i suoi trace |
 | Trace | waterfall degli span |
-| Database | slow SQL aggregate per hash |
-| External | chiamate uscenti per host |
-| Errori | error traces raggruppati per classe e messaggio |
+| Database | slow SQL aggregate per forma |
+| Esterne | chiamate uscenti per host |
+| Errori | errori ed eccezioni raggruppati per forma |
+| Stato | contatori del daemon: ricevuto, perso, occupato |
 
 La classifica per tempo consumato è la scelta importante: una pagina da 3 secondi
 chiamata due volte al giorno conta meno di una da 300 ms chiamata diecimila volte.
+
+**I grafici sono SVG generato lato server.** Nessuno script, nessuna libreria: la
+geometria si calcola in Go e il template emette `path` e `rect`. Una pagina di
+diagnostica che dipende da un bundle JavaScript è una pagina che può non caricarsi
+proprio quando serve.
+
+Un dettaglio che cambia cosa racconta il grafico: gli intervalli senza traffico
+**interrompono** la linea invece di essere disegnati a zero. Unire due punti attraverso
+un buco disegnerebbe una pendenza che non è mai esistita.
+
+### Accesso
+
+Token unico in configurazione, generato da `--init`. Si passa come
+`Authorization: Bearer` oppure una volta sola come `?token=`, che imposta un cookie: così
+il token non resta negli URL, dove finirebbe nei log del reverse proxy e nella cronologia
+del browser. Il confronto è a tempo costante.
+
+`/salute` resta fuori dall'autenticazione: serve a un supervisore per sapere se il
+processo risponde, e non espone dati raccolti.
+
+### Auto-osservazione
+
+Un APM che non sa dire se sta perdendo dati **mente per omissione**: se il socket satura
+o il disco si riempie, tutte le altre pagine continuano a mostrare numeri plausibili ma
+incompleti, e niente lo segnala.
+
+Da qui il campo che l'agent aggiunge a ogni frame: **quante transazioni non è riuscito a
+consegnare** dall'ultima consegna riuscita. È l'unica informazione che il daemon non
+potrebbe dedurre da solo — ciò che non gli è arrivato, per definizione, non gli è
+arrivato. Il contatore si azzera a ogni consegna riuscita, quindi il daemon somma delta
+e non deve inseguire pid che si riciclano.
+
+La pagina Stato mostra quel numero insieme ai frame rifiutati e alle finestre perse in
+scrittura, e dichiara la raccolta «con perdite» invece di «completa» appena uno dei tre
+è diverso da zero.
+
+### Allarmi
+
+Valutati ogni minuto sulle metriche recenti e scritti nel **log del daemon**: `WARN` al
+superamento, `INFO` al rientro. Nessuna notifica viene inviata da orma — chi ha già una
+raccolta log la intercetta da lì, e costruirsi una propria catena di notifiche
+significherebbe duplicare male qualcosa che esiste già meglio altrove.
+
+Si segnalano le **transizioni**, non lo stato: un allarme ripetuto ogni minuto diventa
+rumore che si impara a ignorare, ed è così che si perdono quelli veri. Sotto le 20
+richieste nella finestra le regole non scattano: due errori su tre richieste non sono
+un'emergenza, sono un sito senza traffico.
 
 ---
 

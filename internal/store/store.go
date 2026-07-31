@@ -116,8 +116,20 @@ type Store struct {
 	db        *sql.DB
 	retention Retention
 
-	mu     sync.Mutex
-	appIDs map[string]int64
+	mu           sync.Mutex
+	appIDs       map[string]int64
+	ultimoVacuum time.Time
+}
+
+// Dimensione restituisce i byte occupati dal database, WAL compreso.
+func (s *Store) Dimensione(path string) int64 {
+	var totale int64
+	for _, suffisso := range []string{"", "-wal", "-shm"} {
+		if info, err := os.Stat(path + suffisso); err == nil {
+			totale += info.Size()
+		}
+	}
+	return totale
 }
 
 const schema = `

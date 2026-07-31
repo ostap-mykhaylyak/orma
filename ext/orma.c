@@ -66,6 +66,7 @@ static PHP_GSHUTDOWN_FUNCTION(orma)
 	orma_buf_free(&orma_globals->buf);
 	orma_spans_free();
 	orma_observer_free();
+	orma_hooks_free();
 }
 
 PHP_MINIT_FUNCTION(orma)
@@ -118,6 +119,7 @@ PHP_RINIT_FUNCTION(orma)
 
 	orma_spans_reset();
 	orma_observer_reset();
+	orma_hooks_reset();
 	orma_txn_begin();
 	return SUCCESS;
 }
@@ -173,7 +175,7 @@ PHP_MINFO_FUNCTION(orma)
 	char sent[32], dropped[32];
 
 	snprintf(sent, sizeof(sent), "%" PRIu64, ORMA_G(sent_frames));
-	snprintf(dropped, sizeof(dropped), "%" PRIu64, ORMA_G(dropped_frames));
+	snprintf(dropped, sizeof(dropped), "%" PRIu64, ORMA_G(dropped_total));
 
 	php_info_print_table_start();
 	php_info_print_table_header(2, "orma", "abilitata");

@@ -75,6 +75,59 @@ func Estensione(phpBin, soPath, appName, socket string) (Esito, error) {
 	return esito, nil
 }
 
+// Rimuovi disinstalla l'estensione: toglie il .so dalla extension_dir e l'INI
+// da dove era stato scritto. Restituisce l'elenco di cio' che ha rimosso.
+//
+// Un file gia' assente non e' un errore: disinstallare due volte deve poter
+// funzionare, per esempio dopo una prima rimozione interrotta a meta'.
+func Rimuovi(phpBin string) ([]string, error) {
+	if phpBin == "" {
+		phpBin = "php"
+	}
+	if _, err := exec.LookPath(phpBin); err != nil {
+		return nil, fmt.Errorf("%s non trovato: indica l'interprete con --php", phpBin)
+	}
+
+	var rimossi []string
+
+	if dir, err := valore(phpBin, `echo ini_get("extension_dir");`); err == nil && dir != "" {
+		if r, err := rimuoviSeEsiste(filepath.Join(dir, "orma.so")); err != nil {
+			return rimossi, err
+		} else if r != "" {
+			rimossi = append(rimossi, r)
+		}
+	}
+
+	candidati := []string{}
+	if versione, err := valore(phpBin, `echo PHP_MAJOR_VERSION . "." . PHP_MINOR_VERSION;`); err == nil && versione != "" {
+		candidati = append(candidati, filepath.Join("/etc/php", versione, "mods-available", "orma.ini"))
+	}
+	if scan, err := directoryDiScansione(phpBin); err == nil {
+		candidati = append(candidati, filepath.Join(scan, "99-orma.ini"), filepath.Join(scan, "orma.ini"))
+	}
+
+	for _, c := range candidati {
+		r, err := rimuoviSeEsiste(c)
+		if err != nil {
+			return rimossi, err
+		}
+		if r != "" {
+			rimossi = append(rimossi, r)
+		}
+	}
+	return rimossi, nil
+}
+
+func rimuoviSeEsiste(percorso string) (string, error) {
+	if err := os.Remove(percorso); err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("rimozione di %s: %w", percorso, err)
+	}
+	return percorso, nil
+}
+
 func accanto(nome string) (string, error) {
 	exe, err := os.Executable()
 	if err != nil {

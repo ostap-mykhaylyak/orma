@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ostap-mykhaylyak/orma/internal/protocol"
@@ -61,6 +62,10 @@ type Aggregator struct {
 	log   *slog.Logger
 	opts  Options
 
+	finestreScritte atomic.Uint64
+	finestrePerse   atomic.Uint64
+	agentPerse      atomic.Uint64
+
 	mu      sync.Mutex
 	windows map[int64]*store.Window
 	// La piu' lenta del minuto per nome, fra quelle che non hanno superato la
@@ -84,6 +89,10 @@ func New(st *store.Store, log *slog.Logger, opts Options) *Aggregator {
 func (a *Aggregator) Add(txn *protocol.Transaction) {
 	if txn == nil {
 		return
+	}
+
+	if txn.AgentDropped > 0 {
+		a.agentPerse.Add(uint64(txn.AgentDropped))
 	}
 
 	ts := int64(txn.StartUnixNano / 1e9)
@@ -345,6 +354,31 @@ func isError(txn *protocol.Transaction) bool {
 	return txn.Errors > 0 || txn.HTTPStatus >= 500
 }
 
+// Stats sono i contatori interni, per la pagina di stato e per gli allarmi.
+type Stats struct {
+	FinestreScritte uint64
+	FinestrePerse   uint64
+	// AgentPerse e' quante transazioni gli agent dichiarano di non essere
+	// riusciti a consegnare. Se cresce, il daemon e' cieco su una parte del
+	// traffico e nessun'altra metrica lo direbbe.
+	AgentPerse     uint64
+	FinestreAperte int
+}
+
+// Stats restituisce una fotografia dei contatori.
+func (a *Aggregator) Stats() Stats {
+	a.mu.Lock()
+	aperte := len(a.windows)
+	a.mu.Unlock()
+
+	return Stats{
+		FinestreScritte: a.finestreScritte.Load(),
+		FinestrePerse:   a.finestrePerse.Load(),
+		AgentPerse:      a.agentPerse.Load(),
+		FinestreAperte:  aperte,
+	}
+}
+
 // Run riversa periodicamente le finestre chiuse finche' il contesto vive, poi
 // scrive anche quella corrente per non perdere l'ultimo minuto.
 func (a *Aggregator) Run(ctx context.Context) {
@@ -393,6 +427,7 @@ func (a *Aggregator) flush(all bool) {
 			continue
 		}
 		if err := a.store.WriteWindow(ts, w); err != nil {
+			a.finestrePerse.Add(1)
 			// I dati sono gia' stati tolti dalla memoria: rimetterli
 			// significherebbe rischiare di crescere senza limite se il disco
 			// resta rotto. Si perde la finestra e lo si dice.
@@ -400,6 +435,7 @@ func (a *Aggregator) flush(all bool) {
 				"finestra", ts, "serie", len(w.Metrics), "errore", err)
 			continue
 		}
+		a.finestreScritte.Add(1)
 		a.log.Debug("finestra scritta", "finestra", ts,
 			"serie", len(w.Metrics), "query", len(w.SQL),
 			"host", len(w.Hosts), "trace", len(w.Traces), "errori", len(w.Errors))

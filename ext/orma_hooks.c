@@ -39,6 +39,10 @@ static zif_handler orig_pdostatement_execute;
 static zif_handler orig_mysqli_query;
 static zif_handler orig_mysqli_real_query;
 static zif_handler orig_mysqli_method_query;
+static zif_handler orig_mysqli_prepare;
+static zif_handler orig_mysqli_method_prepare;
+static zif_handler orig_mysqli_stmt_execute;
+static zif_handler orig_mysqli_stmt_method_execute;
 
 /* ---------------------------------------------------------------- utilita' */
 
@@ -166,6 +170,134 @@ static void orma_mysqli_method_query_handler(INTERNAL_FUNCTION_PARAMETERS)
 {
 	orma_db_call(orig_mysqli_method_query, execute_data, return_value, "mysqli",
 	             orma_arg(execute_data, 1));
+}
+
+/* ------------------------------------------- statement preparati di mysqli */
+
+/* Alla preparazione lo statement e' un argomento; all'esecuzione non e' piu'
+ * raggiungibile da nessuna parte. Si tiene una mappa dall'handle dell'oggetto
+ * mysqli_stmt all'SQL gia' offuscato, valida per la durata della richiesta.
+ *
+ * Offset e lunghezza nell'arena stanno in un solo intero: la mappa contiene
+ * numeri, non puntatori, e l'arena puo' essere rilocata senza invalidarla. */
+static void orma_stmt_ricorda(uint32_t handle, const char *sql, size_t len)
+{
+	if (ORMA_G(stmt_map) == NULL) {
+		ALLOC_HASHTABLE(ORMA_G(stmt_map));
+		zend_hash_init(ORMA_G(stmt_map), 16, NULL, NULL, 1);
+	}
+
+	char offuscato[ORMA_MAX_STATEMENT + 1];
+	size_t offuscato_len = orma_sql_obfuscate(sql, len, offuscato, sizeof(offuscato));
+
+	uint32_t off, salvato_len;
+	if (!orma_arena_copy(offuscato, offuscato_len, &off, &salvato_len)) {
+		return;
+	}
+
+	zval v;
+	ZVAL_LONG(&v, ((zend_long)off << 16) | (zend_long)(salvato_len & 0xFFFF));
+	zend_hash_index_update(ORMA_G(stmt_map), (zend_ulong)handle, &v);
+}
+
+static bool orma_stmt_ricorda_get(uint32_t handle, const char **sql, size_t *len)
+{
+	if (ORMA_G(stmt_map) == NULL) {
+		return false;
+	}
+	zval *v = zend_hash_index_find(ORMA_G(stmt_map), (zend_ulong)handle);
+	if (v == NULL || Z_TYPE_P(v) != IS_LONG) {
+		return false;
+	}
+
+	uint32_t off = (uint32_t)(Z_LVAL_P(v) >> 16);
+	uint32_t salvato_len = (uint32_t)(Z_LVAL_P(v) & 0xFFFF);
+	if (salvato_len == 0) {
+		return false;
+	}
+
+	*sql = orma_arena_str(off);
+	*len = salvato_len;
+	return true;
+}
+
+void orma_hooks_reset(void)
+{
+	if (ORMA_G(stmt_map) != NULL) {
+		zend_hash_clean(ORMA_G(stmt_map));
+	}
+}
+
+void orma_hooks_free(void)
+{
+	if (ORMA_G(stmt_map) != NULL) {
+		zend_hash_destroy(ORMA_G(stmt_map));
+		FREE_HASHTABLE(ORMA_G(stmt_map));
+		ORMA_G(stmt_map) = NULL;
+	}
+}
+
+static void orma_prepare_call(zif_handler original, zend_execute_data *execute_data,
+                              zval *return_value, uint32_t indice_sql)
+{
+	const zval *sql = orma_arg(execute_data, indice_sql);
+
+	original(execute_data, return_value);
+
+	if (ORMA_G(txn).active && sql != NULL && Z_TYPE_P(sql) == IS_STRING
+	    && return_value != NULL && Z_TYPE_P(return_value) == IS_OBJECT) {
+		orma_stmt_ricorda(Z_OBJ_HANDLE_P(return_value), Z_STRVAL_P(sql), Z_STRLEN_P(sql));
+	}
+}
+
+static void orma_stmt_execute_call(zif_handler original, zend_execute_data *execute_data,
+                                   zval *return_value, const zval *stmt)
+{
+	const char *sql = NULL;
+	size_t len = 0;
+
+	if (!ORMA_G(txn).active || stmt == NULL || Z_TYPE_P(stmt) != IS_OBJECT
+	    || !orma_stmt_ricorda_get(Z_OBJ_HANDLE_P(stmt), &sql, &len)) {
+		/* Senza statement lo span si apre lo stesso: sapere che c'e' stata una
+		 * esecuzione e quanto e' costata vale piu' di non sapere nulla. */
+		int span = orma_span_open("EXECUTE", 7, ORMA_SPAN_CLIENT);
+		orma_span_attr_str(span, "db.system", "mysqli", 6);
+		original(execute_data, return_value);
+		orma_span_close(span, orma_failed(return_value) ? ORMA_STATUS_ERROR : ORMA_STATUS_OK);
+		return;
+	}
+
+	const char *op = orma_sql_operation(sql, len);
+	int span = orma_span_open(op, strlen(op), ORMA_SPAN_CLIENT);
+	orma_span_attr_str(span, "db.system", "mysqli", 6);
+	/* Lo statement e' gia' offuscato: e' stato trattato alla preparazione. */
+	orma_span_attr_str(span, "db.statement", sql, len);
+
+	original(execute_data, return_value);
+
+	orma_span_close(span, orma_failed(return_value) ? ORMA_STATUS_ERROR : ORMA_STATUS_OK);
+}
+
+static void orma_mysqli_prepare_handler(INTERNAL_FUNCTION_PARAMETERS)
+{
+	orma_prepare_call(orig_mysqli_prepare, execute_data, return_value, 2);
+}
+
+static void orma_mysqli_method_prepare_handler(INTERNAL_FUNCTION_PARAMETERS)
+{
+	orma_prepare_call(orig_mysqli_method_prepare, execute_data, return_value, 1);
+}
+
+static void orma_mysqli_stmt_execute_handler(INTERNAL_FUNCTION_PARAMETERS)
+{
+	orma_stmt_execute_call(orig_mysqli_stmt_execute, execute_data, return_value,
+	                       orma_arg(execute_data, 1));
+}
+
+static void orma_mysqli_stmt_method_execute_handler(INTERNAL_FUNCTION_PARAMETERS)
+{
+	orma_stmt_execute_call(orig_mysqli_stmt_method_execute, execute_data, return_value,
+	                       getThis());
 }
 
 /* ------------------------------------------------------------------ esterne */
@@ -325,4 +457,12 @@ void orma_hooks_install(void)
 	                 orma_pdostatement_execute_handler, orig_pdostatement_execute);
 	ORMA_HOOK_METHOD("mysqli", "query",
 	                 orma_mysqli_method_query_handler, orig_mysqli_method_query);
+
+	ORMA_HOOK_FN("mysqli_prepare", orma_mysqli_prepare_handler, orig_mysqli_prepare);
+	ORMA_HOOK_FN("mysqli_stmt_execute",
+	             orma_mysqli_stmt_execute_handler, orig_mysqli_stmt_execute);
+	ORMA_HOOK_METHOD("mysqli", "prepare",
+	                 orma_mysqli_method_prepare_handler, orig_mysqli_method_prepare);
+	ORMA_HOOK_METHOD("mysqli_stmt", "execute",
+	                 orma_mysqli_stmt_method_execute_handler, orig_mysqli_stmt_method_execute);
 }

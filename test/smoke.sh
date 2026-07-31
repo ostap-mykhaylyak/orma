@@ -151,19 +151,37 @@ echo
 echo "== la UI rilegge dal database =="
 /src/dist/orma start 2>>/tmp/orma.log &
 sleep 1
-php -r 'echo @file_get_contents("http://127.0.0.1:8737/?minuti=60");' >/src/dist/panoramica.html
-php -r 'echo @file_get_contents("http://127.0.0.1:8737/database?minuti=60");' >/src/dist/database.html
-php -r 'echo @file_get_contents("http://127.0.0.1:8737/esterne?minuti=60");' >/src/dist/esterne.html
-php -r 'echo @file_get_contents("http://127.0.0.1:8737/errori?minuti=60");' >/src/dist/errori.html
-php -r 'echo @file_get_contents("http://127.0.0.1:8737/tracce?minuti=60");' >/src/dist/tracce.html
+TOKEN=$(awk '/^ui_token:/ {print $2}' /etc/orma/orma.yaml)
+
+echo "== la UI rifiuta senza token =="
+php -r '
+$c = stream_context_create(["http" => ["ignore_errors" => true]]);
+@file_get_contents("http://127.0.0.1:8737/", false, $c);
+echo $http_response_header[0] ?? "nessuna risposta", "\n";
+'
+
+pagina() {
+	php -r "echo @file_get_contents('http://127.0.0.1:8737/$1');" >"/src/dist/$2"
+}
+
 id=$(sqlite3 /var/lib/orma/orma.db "SELECT id FROM traces ORDER BY duration_ns DESC LIMIT 1;")
-php -r "echo @file_get_contents('http://127.0.0.1:8737/traccia?id=$id');" >/src/dist/traccia.html
+
+pagina "?minuti=60&token=$TOKEN"            panoramica.html
+pagina "database?minuti=60&token=$TOKEN"    database.html
+pagina "esterne?minuti=60&token=$TOKEN"     esterne.html
+pagina "errori?minuti=60&token=$TOKEN"      errori.html
+pagina "tracce?minuti=60&token=$TOKEN"      tracce.html
+pagina "stato?minuti=60&token=$TOKEN"       stato.html
+pagina "traccia?id=$id&token=$TOKEN"        traccia.html
+pagina "transazione?nome=%2Fcarico&minuti=60&token=$TOKEN" transazione.html
 echo "panoramica: $(wc -c </src/dist/panoramica.html) byte"
 echo "database:   $(wc -c </src/dist/database.html) byte"
 echo "esterne:    $(wc -c </src/dist/esterne.html) byte"
 echo "errori:     $(wc -c </src/dist/errori.html) byte"
 echo "tracce:     $(wc -c </src/dist/tracce.html) byte"
 echo "traccia:    $(wc -c </src/dist/traccia.html) byte"
+echo "stato:      $(wc -c </src/dist/stato.html) byte"
+echo "transazione:$(wc -c </src/dist/transazione.html) byte"
 /src/dist/orma stop >/dev/null
 
 echo

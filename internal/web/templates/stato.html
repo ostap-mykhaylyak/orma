@@ -1,0 +1,71 @@
+{{ template "intestazione" . }}
+
+  <div class="tiles">
+    <div class="tile">
+      <div class="k">Raccolta</div>
+      <div class="v {{ if .Stato.InSalute }}stato-ok{{ else }}stato-attenzione{{ end }}">
+        {{ if .Stato.InSalute }}completa{{ else }}con perdite{{ end }}
+      </div>
+    </div>
+    <div class="tile"><div class="k">Attivo da</div><div class="v">{{ .Stato.Attivo }}</div></div>
+    <div class="tile"><div class="k">Transazioni ricevute</div><div class="v">{{ num .Stato.FrameRicevuti }}</div></div>
+    <div class="tile">
+      <div class="k">Perse dall'agent</div>
+      <div class="v {{ if gt .Stato.AgentPerse 0 }}err{{ end }}">{{ num .Stato.AgentPerse }}</div>
+    </div>
+    <div class="tile"><div class="k">Database</div><div class="v">{{ .Stato.DimensioneLeggibile }}</div></div>
+  </div>
+
+  {{ if not .Stato.InSalute }}
+  <div class="grafico" style="border-color: var(--err)">
+    <h3 class="stato-attenzione">Attenzione</h3>
+    <div class="scala">
+      Alcuni dati non sono stati raccolti: le altre pagine mostrano numeri veri ma incompleti.
+      {{ if gt .Stato.AgentPerse 0 }}
+      Le transazioni perse dall'agent indicano che il daemon non stava accettando abbastanza in fretta,
+      o che era fermo mentre PHP serviva richieste.
+      {{ end }}
+      {{ if gt .Stato.FinestrePerse 0 }}
+      Le finestre perse indicano una scrittura su disco fallita.
+      {{ end }}
+    </div>
+  </div>
+  {{ end }}
+
+  <h2>Ingestione</h2>
+  <div class="scroll">
+    <table>
+      <tbody>
+        <tr><td>Transazioni ricevute</td><td class="n">{{ num .Stato.FrameRicevuti }}</td></tr>
+        <tr><td>Byte ricevuti</td><td class="n">{{ .Stato.ByteLeggibili }}</td></tr>
+        <tr><td>Frame rifiutati (malformati o di versione errata)</td>
+            <td class="n">{{ num .Stato.FrameRifiutati }}</td></tr>
+        <tr><td>Transazioni che l'agent non ha consegnato</td>
+            <td class="n">{{ num .Stato.AgentPerse }}</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2>Aggregazione e storage</h2>
+  <div class="scroll">
+    <table>
+      <tbody>
+        <tr><td>Finestre scritte</td><td class="n">{{ num .Stato.FinestreScritte }}</td></tr>
+        <tr><td>Finestre perse</td><td class="n">{{ num .Stato.FinestrePerse }}</td></tr>
+        <tr><td>Finestre ancora in memoria</td><td class="n">{{ .Stato.FinestreAperte }}</td></tr>
+        <tr><td>Database</td><td class="n">{{ .Stato.Database }}</td></tr>
+        <tr><td>Dimensione su disco</td><td class="n">{{ .Stato.DimensioneLeggibile }}</td></tr>
+        <tr><td>Socket</td><td class="n">{{ .Stato.Socket }}</td></tr>
+        <tr><td>Gruppo del socket</td>
+            <td class="n">{{ if .Stato.SocketGruppo }}{{ .Stato.SocketGruppo }}{{ else }}nessuno (aperto a tutti){{ end }}</td></tr>
+        <tr><td>Versione</td><td class="n">{{ .Stato.Versione }}</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="legenda">
+    <span>Gli allarmi vengono scritti nel log del daemon con livello WARN: seguili con
+    <code>journalctl -u orma -f</code> o dove reindirizzi il suo stderr.</span>
+  </div>
+
+{{ template "chiusura" . }}

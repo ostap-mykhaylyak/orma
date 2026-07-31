@@ -10,4 +10,7 @@ void orma_sender_send(const char *data, size_t len);
 
 void orma_sender_close(void);
 
+/* Contabilizza un frame perso. Il conteggio viaggia nel frame successivo. */
+void orma_sender_drop(void);
+
 #endif /* ORMA_SENDER_H */

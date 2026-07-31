@@ -47,8 +47,30 @@ sudo systemctl restart php8.5-fpm
 sudo orma start
 ```
 
-L'interfaccia è su `127.0.0.1:8737`. **Non ha autenticazione**: tienila dietro a un
-reverse proxy o su una rete privata.
+`--init` genera anche il token di accesso all'interfaccia e te lo stampa con l'URL
+pronto. L'interfaccia è su `127.0.0.1:8737`.
+
+Per disinstallare tutto — estensione, INI, configurazione e dati raccolti:
+
+```bash
+sudo orma stop
+sudo orma --purge
+```
+
+## Cosa vedi
+
+| Pagina | Cosa mostra |
+|---|---|
+| Panoramica | tempo di risposta e traffico nel tempo, apdex, classifica delle transazioni per tempo consumato |
+| Transazione | l'andamento di una singola pagina, dove va il suo tempo, i suoi trace |
+| Database | le query aggregate per forma, già offuscate |
+| Esterne | le chiamate uscenti per host |
+| Errori | errori ed eccezioni raggruppati per forma, fatali distinti dagli avvisi |
+| Tracce | le richieste conservate per intero, con il waterfall |
+| Stato | i contatori del daemon: quanto ha ricevuto, quanto ha perso, quanto occupa |
+
+I grafici sono SVG generato dal server: nessuno script, nessuna libreria, niente che
+possa non caricarsi.
 
 ## Configurazione
 
@@ -62,6 +84,39 @@ socket_group: www-data
 Senza, il socket resta accessibile a qualunque utente locale, che potrebbe iniettare
 telemetria falsa. Il daemon lo segnala all'avvio.
 
+### Accesso all'interfaccia
+
+Il token generato da `--init` si passa in due modi:
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8737/
+```
+
+oppure una volta sola nel browser come `?token=<token>`, che imposta un cookie per la
+navigazione successiva — così il token non resta negli URL, dove finirebbe nei log del
+reverse proxy e nella cronologia. Svuotare `ui_token` disattiva la protezione, e il
+daemon lo segnala all'avvio.
+
+`/salute` resta sempre accessibile: serve a un supervisore per sapere se il processo
+risponde, e non espone dati raccolti.
+
+### Allarmi
+
+Vengono scritti nel log del daemon con livello `WARN` quando una soglia viene superata,
+e `INFO` quando la situazione rientra. Si segnalano le **transizioni**, non lo stato: un
+allarme ripetuto ogni minuto diventa rumore che si impara a ignorare, ed è così che si
+perdono quelli veri.
+
+```yaml
+alert_error_rate_pct: 5
+alert_apdex_min: 0.8
+alert_p95_ms: 2000
+```
+
+Nessuna notifica viene inviata da orma: chi ha già una raccolta log la intercetta da lì.
+Le regole non scattano sotto le 20 richieste nella finestra — due errori su tre richieste
+non sono un'emergenza, sono un sito senza traffico.
+
 L'estensione si configura nel suo INI:
 
 ```ini
@@ -74,12 +129,19 @@ orma.max_depth=5
 
 ## Cosa costa
 
-Misurato con `test/overhead.sh`, su una pagina con molte query: **circa il 5% con
-`detail = 0`, il 10% con `detail = 1`**. Su codice fatto di sole chiamate di funzione
-`detail = 1` arriva al 70–80%: è il caso peggiore possibile, ma esiste. La tabella
-completa e cosa significa sono in [DESIGN.md](DESIGN.md#costo-misurato).
+**Su WordPress vero**, misurato con `test/fpm/` — WordPress 7 su php-fpm, 3000 richieste
+per giro, con e senza estensione: **fra il 4% e il 9% di throughput** con `detail = 1`.
 
-Il 5% di `detail = 0` è l'instrumentazione delle query: è il prezzo di sapere quali
+La memoria dei worker non cresce. Su 3000 richieste con `pm.max_requests = 0`, cioè
+senza riciclo, i worker con orma attiva sono cresciuti *meno* di quelli senza: la
+crescita che si osserva è riscaldamento di WordPress e opcache, non nostra.
+
+Sui carichi sintetici di `test/overhead.sh`: circa il 5% con `detail = 0` e il 10% con
+`detail = 1` su una pagina con molte query; su codice fatto di sole chiamate di funzione
+`detail = 1` arriva al 70–80%, che è il caso peggiore possibile ma esiste. La tabella
+completa è in [DESIGN.md](DESIGN.md#costo-misurato).
+
+Il costo con `detail = 0` è l'instrumentazione delle query: è il prezzo di sapere quali
 girano. Se ti serve il minimo assoluto, `orma.enabled = 0` costa zero misurabile.
 
 ## API per l'applicazione
@@ -125,9 +187,18 @@ make ext          # compila l'estensione in ubuntu:26.04
 make ext-test     # i test .phpt
 make test         # vet e test del daemon
 make smoke        # prova end-to-end: PHP vero, socket, daemon, SQLite, pagine
+make asan         # ricompila sotto AddressSanitizer e cerca errori di memoria
+make overhead     # misura il costo dell'instrumentazione
+make wordpress    # php-fpm vero + WordPress + carico, con giro di controllo
 make daemon       # binario del daemon
 ```
 
+`make wordpress` è quello che conta prima di una release: è l'unico che esercita worker
+che vivono migliaia di richieste, la fork del master e il riuso dei buffer fra richieste.
+`make asan` fa girare l'estensione sotto AddressSanitizer su carico sintetico, SQL
+patologico e uscita anticipata: quel codice sta dentro ogni processo PHP del server, e
+un accesso fuori dai limiti lì non è un dato sbagliato, è il sito giù.
+
 ## Licenza
 
-Non ancora decisa.
+MIT. Vedi [LICENSE](LICENSE).

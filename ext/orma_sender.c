@@ -135,18 +135,29 @@ void orma_sender_send(const char *data, size_t len)
 		if (fd < 0) {
 			fd = orma_sender_open();
 			if (fd < 0) {
-				ORMA_G(dropped_frames)++;
+				orma_sender_drop();
 				return;
 			}
 		}
 
 		if (orma_write_all(fd, data, len)) {
 			ORMA_G(sent_frames)++;
+			/* Il frame appena consegnato dichiarava quanti se ne erano persi:
+			 * ora che il daemon lo sa, si riparte da zero. */
+			ORMA_G(dropped_frames) = 0;
 			return;
 		}
 
 		orma_sender_close();
 	}
 
-	ORMA_G(dropped_frames)++;
+	orma_sender_drop();
+}
+
+void orma_sender_drop(void)
+{
+	if (ORMA_G(dropped_frames) < UINT32_MAX) {
+		ORMA_G(dropped_frames)++;
+	}
+	ORMA_G(dropped_total)++;
 }

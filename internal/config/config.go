@@ -9,6 +9,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/ostap-mykhaylyak/orma/internal/allarmi"
 	"github.com/ostap-mykhaylyak/orma/internal/store"
 )
 
@@ -30,6 +31,10 @@ type Config struct {
 	Database string `yaml:"database"`
 	// Listen e' l'indirizzo della UI web.
 	Listen string `yaml:"listen"`
+	// UIToken protegge l'interfaccia. Vuoto significa nessuna protezione, e il
+	// daemon lo segnala all'avvio: un APM espone query, host contattati e
+	// messaggi d'errore.
+	UIToken string `yaml:"ui_token"`
 	// LogLevel e' uno fra debug, info, warn, error.
 	LogLevel string `yaml:"log_level"`
 	// TraceThresholdMS e' la durata sopra la quale si conserva il trace
@@ -54,6 +59,23 @@ type Config struct {
 	RetentionTraceDays int `yaml:"retention_traces_days"`
 	RetentionErrorDays int `yaml:"retention_errors_days"`
 	RetentionSQLDays   int `yaml:"retention_sql_days"`
+
+	// Soglie degli allarmi, riportati nel log del daemon. Zero disattiva la
+	// singola regola.
+	AlertErrorRatePct float64 `yaml:"alert_error_rate_pct"`
+	AlertApdexMin     float64 `yaml:"alert_apdex_min"`
+	AlertP95MS        int     `yaml:"alert_p95_ms"`
+	AlertFinestraMin  int     `yaml:"alert_finestra_minuti"`
+}
+
+// Regole traduce la configurazione nelle soglie degli allarmi.
+func (c Config) Regole() allarmi.Regole {
+	return allarmi.Regole{
+		ErrorRatePct:   c.AlertErrorRatePct,
+		ApdexMin:       c.AlertApdexMin,
+		P95MS:          float64(c.AlertP95MS),
+		FinestraMinuti: c.AlertFinestraMin,
+	}
 }
 
 // Default restituisce la configurazione predefinita.
@@ -77,6 +99,11 @@ func Default() Config {
 		RetentionTraceDays: 7,
 		RetentionErrorDays: 30,
 		RetentionSQLDays:   7,
+
+		AlertErrorRatePct: 5,
+		AlertApdexMin:     0.8,
+		AlertP95MS:        2000,
+		AlertFinestraMin:  5,
 	}
 }
 
@@ -190,8 +217,14 @@ const Template = `# Configurazione di orma.
 # Database SQLite con metriche, trace, slow SQL ed errori.
 #database: /var/lib/orma/orma.db
 
-# Indirizzo della UI web. Tienila dietro a un reverse proxy: non ha autenticazione propria.
+# Indirizzo della UI web.
 #listen: 127.0.0.1:8737
+
+# Token di accesso all'interfaccia. Si passa come "Authorization: Bearer <token>"
+# oppure una volta sola come ?token=<token>, che imposta un cookie per la
+# navigazione. Vuoto disattiva la protezione, e il daemon lo segnala all'avvio.
+# orma --init ne genera uno.
+#ui_token:
 
 # Verbosita': debug, info, warn, error.
 #log_level: info
@@ -227,4 +260,13 @@ const Template = `# Configurazione di orma.
 #retention_traces_days: 7
 #retention_errors_days: 30
 #retention_sql_days: 7
+
+# Allarmi. Vengono scritti nel log del daemon con livello WARN quando una
+# soglia viene superata e con INFO quando la situazione rientra: si segnalano
+# le transizioni, non lo stato, perche' un allarme ripetuto ogni minuto
+# diventa rumore che si impara a ignorare. Zero disattiva la singola regola.
+#alert_error_rate_pct: 5
+#alert_apdex_min: 0.8
+#alert_p95_ms: 2000
+#alert_finestra_minuti: 5
 `

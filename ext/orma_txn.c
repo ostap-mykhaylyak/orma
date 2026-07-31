@@ -272,16 +272,27 @@ static void orma_txn_assign_name(orma_txn *txn)
 		return;
 	}
 
-	const char *uri = SG(request_info).request_uri;
+	/* Su php-fpm SG(request_info).request_uri contiene lo SCRIPT_NAME, non
+	 * l'URI richiesto: con un front controller tutte le pagine diventerebbero
+	 * "/index.php" e le metriche non direbbero piu' nulla. L'URI vero sta
+	 * nell'ambiente della richiesta, che si legge senza materializzare
+	 * $_SERVER. Il ripiego resta per i SAPI che non lo espongono. */
+	char *env_uri = sapi_getenv("REQUEST_URI", sizeof("REQUEST_URI") - 1);
+	const char *uri = (env_uri != NULL && *env_uri != '\0')
+	                ? env_uri
+	                : SG(request_info).request_uri;
 
 	if (uri == NULL || *uri == '\0') {
 		txn->background = true;
 		orma_name_background(txn);
-		return;
+	} else {
+		txn->background = false;
+		txn->name_len = orma_normalize_path(uri, strlen(uri), txn->name, sizeof(txn->name));
 	}
 
-	txn->background = false;
-	txn->name_len = orma_normalize_path(uri, strlen(uri), txn->name, sizeof(txn->name));
+	if (env_uri != NULL) {
+		efree(env_uri);
+	}
 }
 
 static void orma_cpu_times(uint64_t *user_nano, uint64_t *sys_nano)

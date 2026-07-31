@@ -208,8 +208,34 @@ func (s *Store) Purge(r Retention, log *slog.Logger) error {
 		}
 	}
 
-	if totale > 0 && log != nil {
+	if totale == 0 {
+		return nil
+	}
+	if log != nil {
 		log.Info("dati scaduti rimossi", "righe", totale)
+	}
+
+	// DELETE libera pagine dentro il file ma non lo restringe: senza VACUUM il
+	// database resta grande quanto il picco di traffico piu' alto mai visto.
+	// Si compatta al piu' una volta all'ora, perche' VACUUM riscrive il file
+	// e prende un lock esclusivo.
+	s.mu.Lock()
+	scaduto := now.Sub(s.ultimoVacuum) >= time.Hour
+	if scaduto {
+		s.ultimoVacuum = now
+	}
+	s.mu.Unlock()
+
+	if !scaduto {
+		return nil
+	}
+
+	inizio := time.Now()
+	if _, err := s.db.Exec(`VACUUM`); err != nil {
+		return fmt.Errorf("compattazione del database: %w", err)
+	}
+	if log != nil {
+		log.Info("database compattato", "durata", time.Since(inizio).Round(time.Millisecond))
 	}
 	return nil
 }

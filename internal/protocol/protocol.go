@@ -17,8 +17,9 @@ import (
 )
 
 // Version e' la versione del protocollo supportata. La 2 aggiunge il conteggio
-// dei warning e la sezione degli eventi di errore in coda al frame.
-const Version = 2
+// dei warning e la sezione degli eventi; la 3 aggiunge il numero di frame che
+// l'agent non e' riuscito a consegnare.
+const Version = 3
 
 // Limiti di sanita': un mittente corretto non li raggiunge mai.
 const (
@@ -135,6 +136,10 @@ type Transaction struct {
 	Errors       uint32
 	Warnings     uint32
 	SpansDropped uint32
+	// AgentDropped e' quante transazioni l'agent non e' riuscito a consegnare
+	// dall'ultima consegna riuscita. E' l'unico modo che il daemon ha per
+	// sapere di essere cieco su una parte del traffico.
+	AgentDropped uint32
 	Spans        []Span
 	Events       []Event
 }
@@ -253,6 +258,7 @@ func Decode(frame []byte) (*Transaction, error) {
 	txn.Errors = r.u32()
 	txn.Warnings = r.u32()
 	txn.SpansDropped = r.u32()
+	txn.AgentDropped = r.u32()
 
 	spanCount := r.u32()
 	if r.err != nil {

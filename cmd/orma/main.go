@@ -7,6 +7,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -18,6 +20,7 @@ import (
 	"time"
 
 	"github.com/ostap-mykhaylyak/orma/internal/agg"
+	"github.com/ostap-mykhaylyak/orma/internal/allarmi"
 	"github.com/ostap-mykhaylyak/orma/internal/config"
 	"github.com/ostap-mykhaylyak/orma/internal/ingest"
 	"github.com/ostap-mykhaylyak/orma/internal/install"
@@ -33,7 +36,8 @@ const usage = `orma — APM per PHP
 
 Uso:
   orma <verbo>            start | stop | reload | restart | status
-  orma --init             genera la configurazione iniziale
+  orma --init             genera la configurazione e installa l'estensione
+  orma --purge            disinstalla l'estensione e rimuove dati e configurazione
   orma --check-config     valida la configurazione ed esce
   orma --version          stampa la versione
   orma --help             stampa questo messaggio
@@ -81,6 +85,8 @@ func run(args []string) error {
 		return nil
 	case "init":
 		return doInit(opts)
+	case "purge":
+		return doPurge(opts)
 	case "check-config":
 		return doCheckConfig(opts.configPath)
 	}
@@ -150,7 +156,8 @@ func parse(args []string) (options, error) {
 		case arg == "--senza-estensione":
 			opts.senzaEstensione = true
 
-		case arg == "--init", arg == "--check-config", arg == "--version", arg == "--help":
+		case arg == "--init", arg == "--purge", arg == "--check-config",
+			arg == "--version", arg == "--help":
 			action := strings.TrimPrefix(arg, "--")
 			if opts.action != "" && opts.action != action {
 				return opts, fmt.Errorf("--%s e %s si escludono a vicenda", opts.action, arg)
@@ -193,7 +200,15 @@ func doInit(opts options) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("creazione di %s: %w", filepath.Dir(path), err)
 	}
-	if err := os.WriteFile(path, []byte(config.Template), 0o644); err != nil {
+	// Il token si genera qui e non si lascia vuoto: un default aperto e' un
+	// default che resta aperto. La configurazione va scritta 0600, perche' da
+	// questo momento contiene una credenziale.
+	token, err := generaToken()
+	if err != nil {
+		return err
+	}
+	contenuto := config.Template + "\nui_token: " + token + "\n"
+	if err := os.WriteFile(path, []byte(contenuto), 0o600); err != nil {
 		return fmt.Errorf("scrittura di %s: %w", path, err)
 	}
 
@@ -206,6 +221,8 @@ func doInit(opts options) error {
 
 	fmt.Printf("Scritto  %s\n", path)
 	fmt.Printf("Create   %s, %s\n", filepath.Dir(cfg.Socket), filepath.Dir(cfg.Database))
+	fmt.Printf("\nToken di accesso all'interfaccia:\n\n  %s\n\n", token)
+	fmt.Printf("  http://%s/?token=%s\n\n", cfg.Listen, token)
 
 	if opts.senzaEstensione {
 		fmt.Print("\nEstensione non installata (--senza-estensione).\n")
@@ -232,6 +249,72 @@ func doInit(opts options) error {
 	if esito.Nota != "" {
 		fmt.Printf("Passo successivo: %s\n", esito.Nota)
 	}
+	return nil
+}
+
+func generaToken() (string, error) {
+	grezzo := make([]byte, 24)
+	if _, err := rand.Read(grezzo); err != nil {
+		return "", fmt.Errorf("generazione del token: %w", err)
+	}
+	return hex.EncodeToString(grezzo), nil
+}
+
+// doPurge disinstalla tutto. Rifiuta di procedere con il daemon in esecuzione:
+// rimuovere il database sotto un processo che ci sta scrivendo lascerebbe uno
+// stato peggiore di quello di partenza.
+func doPurge(opts options) error {
+	cfg, err := config.Load(opts.configPath)
+	if err != nil {
+		// Configurazione illeggibile: si procede con i default, perche' lo
+		// scopo di --purge e' proprio ripulire una situazione rotta.
+		cfg = config.Default()
+	}
+
+	if pid, err := pidfile.Read(cfg.PidFile); err == nil && pidfile.Running(pid) {
+		return fmt.Errorf("orma e' in esecuzione con pid %d: fermalo prima con \"orma stop\"", pid)
+	}
+
+	fmt.Println("Rimozione in corso. Verranno cancellati i dati raccolti.")
+
+	var problemi []string
+
+	if !opts.senzaEstensione {
+		rimossi, err := install.Rimuovi(opts.phpBin)
+		for _, r := range rimossi {
+			fmt.Printf("  rimosso  %s\n", r)
+		}
+		if err != nil {
+			problemi = append(problemi, err.Error())
+		}
+	}
+
+	for _, percorso := range []string{
+		cfg.Database, cfg.Database + "-wal", cfg.Database + "-shm",
+		cfg.Socket, cfg.PidFile, opts.configPath,
+	} {
+		if err := os.Remove(percorso); err != nil {
+			if !os.IsNotExist(err) {
+				problemi = append(problemi, err.Error())
+			}
+			continue
+		}
+		fmt.Printf("  rimosso  %s\n", percorso)
+	}
+
+	// Le directory si rimuovono solo se sono rimaste vuote: potrebbero
+	// contenere roba di qualcun altro.
+	for _, dir := range []string{filepath.Dir(cfg.Database), filepath.Dir(cfg.Socket), filepath.Dir(opts.configPath)} {
+		if err := os.Remove(dir); err == nil {
+			fmt.Printf("  rimossa  %s\n", dir)
+		}
+	}
+
+	if len(problemi) > 0 {
+		return fmt.Errorf("rimozione incompleta:\n  %s", strings.Join(problemi, "\n  "))
+	}
+
+	fmt.Println("\nFatto. Riavvia php-fpm perche' l'estensione smetta di essere caricata.")
 	return nil
 }
 
@@ -289,10 +372,6 @@ func doStart(cfg config.Config, configPath string) error {
 	}()
 
 	manutDone := make(chan struct{})
-	go func() {
-		defer close(manutDone)
-		manutenzione(ctx, st, cfg.Retention(), log)
-	}()
 
 	ln := ingest.New(cfg.Socket, cfg.SocketGroup, log, func(txn *protocol.Transaction) {
 		aggregator.Add(txn)
@@ -310,10 +389,47 @@ func doStart(cfg config.Config, configPath string) error {
 	}
 	defer ln.Close()
 
-	srv, err := web.New(cfg.Listen, st, log, float64(cfg.ApdexTMS))
+	avvio := time.Now()
+	srv, err := web.New(st, log, web.Opzioni{
+		Addr:     cfg.Listen,
+		ApdexTMS: float64(cfg.ApdexTMS),
+		Token:    cfg.UIToken,
+		Stato: func() web.Stato {
+			frames, bytes, rifiutati := ln.Stats()
+			s := aggregator.Stats()
+			return web.Stato{
+				Versione:        version.Version,
+				Avvio:           avvio,
+				Socket:          cfg.Socket,
+				SocketGruppo:    cfg.SocketGroup,
+				Database:        cfg.Database,
+				DimensioneDB:    st.Dimensione(cfg.Database),
+				FrameRicevuti:   frames,
+				ByteRicevuti:    bytes,
+				FrameRifiutati:  rifiutati,
+				AgentPerse:      s.AgentPerse,
+				FinestreScritte: s.FinestreScritte,
+				FinestrePerse:   s.FinestrePerse,
+				FinestreAperte:  s.FinestreAperte,
+			}
+		},
+	})
 	if err != nil {
 		return err
 	}
+
+	if cfg.UIToken == "" {
+		log.Warn("interfaccia senza autenticazione: imposta ui_token, "+
+			"perche' le pagine espongono query, host contattati e messaggi d'errore",
+			"listen", cfg.Listen)
+	}
+
+	valutatore := allarmi.Nuovo(st, log, cfg.Regole(), float64(cfg.ApdexTMS))
+
+	go func() {
+		defer close(manutDone)
+		manutenzione(ctx, st, cfg.Retention(), aggregator, valutatore, log)
+	}()
 
 	served := make(chan error, 1)
 	go func() { served <- ln.Serve(ctx) }()
@@ -376,7 +492,9 @@ func doStart(cfg config.Config, configPath string) error {
 //
 // Un errore non ferma il daemon: la raccolta e' piu' importante della
 // manutenzione, e il giro successivo riprova.
-func manutenzione(ctx context.Context, st *store.Store, r store.Retention, log *slog.Logger) {
+func manutenzione(ctx context.Context, st *store.Store, r store.Retention,
+	aggregatore *agg.Aggregator, valutatore *allarmi.Valutatore, log *slog.Logger) {
+
 	rollup := time.NewTicker(time.Minute)
 	defer rollup.Stop()
 	purga := time.NewTicker(10 * time.Minute)
@@ -390,6 +508,7 @@ func manutenzione(ctx context.Context, st *store.Store, r store.Retention, log *
 			if err := st.Rollup(log); err != nil {
 				log.Error("rollup fallito", "errore", err)
 			}
+			valutatore.Valuta(aggregatore.Stats())
 		case <-purga.C:
 			if err := st.Purge(r, log); err != nil {
 				log.Error("purga fallita", "errore", err)

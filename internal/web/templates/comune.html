@@ -66,6 +66,25 @@
   .legenda .ext::before { background: var(--ext); }
   .empty { padding: 2.5rem 1rem; text-align: center; color: var(--muted); }
 
+  /* Grafici: SVG generato lato server, nessuno script. */
+  .grafico { background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+             padding: .8rem 1rem 1rem; margin-top: .75rem; }
+  .grafico h3 { margin: 0 0 .1rem; font-size: .78rem; font-weight: 500; color: var(--muted);
+                text-transform: uppercase; letter-spacing: .06em; }
+  .grafico .scala { font-size: .72rem; color: var(--muted); margin-bottom: .4rem; }
+  .grafico svg { display: block; width: 100%; height: 130px; overflow: visible; }
+  .grafico .area { fill: color-mix(in srgb, var(--accent) 18%, transparent); stroke: none; }
+  .grafico .p95 { fill: none; stroke: var(--accent); stroke-width: 1.4; vector-effect: non-scaling-stroke; }
+  .grafico .barra { fill: color-mix(in srgb, var(--fg) 35%, transparent); }
+  .grafico .barra-errori { fill: var(--err); }
+  .assi { display: flex; justify-content: space-between; font-size: .7rem;
+          color: var(--muted); margin-top: .2rem; }
+  .grafico-vuoto { padding: 2rem 1rem; text-align: center; color: var(--muted); font-size: .85rem; }
+  .griglia-grafici { display: grid; gap: .75rem; grid-template-columns: 1fr; }
+  @media (min-width: 800px) { .griglia-grafici { grid-template-columns: 1fr 1fr; } }
+  .stato-ok { color: var(--db); }
+  .stato-attenzione { color: var(--err); }
+
   /* Waterfall */
   .wf td { vertical-align: middle; }
   .wf .etichetta { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .8rem; }
@@ -97,6 +116,7 @@
     <a href="/esterne?minuti={{ .Minuti }}"  {{ if eq .Pagina "esterne" }}class="on"{{ end }}>Esterne</a>
     <a href="/errori?minuti={{ .Minuti }}"   {{ if eq .Pagina "errori" }}class="on"{{ end }}>Errori</a>
     <a href="/tracce?minuti={{ .Minuti }}"   {{ if eq .Pagina "tracce" }}class="on"{{ end }}>Tracce</a>
+    <a href="/stato?minuti={{ .Minuti }}"    {{ if eq .Pagina "stato" }}class="on"{{ end }}>Stato</a>
   </nav>
 
   <div class="intervalli">
@@ -107,6 +127,46 @@
     <a href="?minuti=10080" {{ if eq .Minuti 10080 }}class="on"{{ end }}>7 giorni</a>
     <a href="?minuti=43200" {{ if eq .Minuti 43200 }}class="on"{{ end }}>30 giorni</a>
   </div>
+{{ end }}
+
+{{ define "grafici" }}
+  {{ if .SenzaDati }}
+  <div class="grafico"><div class="grafico-vuoto">Nessun traffico in questo intervallo.</div></div>
+  {{ else }}
+  <div class="griglia-grafici">
+    <div class="grafico">
+      <h3>Tempo di risposta</h3>
+      <div class="scala">area: media &middot; linea: p95 &middot; massimo {{ ms .MaxMS }} &middot; {{ .PassoTesto }}</div>
+      <svg viewBox="0 0 {{ .Larghezza }} {{ .Altezza }}" preserveAspectRatio="none" role="img"
+           aria-label="andamento del tempo di risposta">
+        <path class="area" d="{{ .AreaMedia }}"/>
+        <path class="p95" d="{{ .LineaP95 }}"/>
+      </svg>
+      <div class="assi">
+        {{ range .Etichette }}<span>{{ .Testo }}</span>{{ end }}
+      </div>
+    </div>
+
+    <div class="grafico">
+      <h3>Richieste</h3>
+      <div class="scala">massimo {{ num .MaxCount }} per intervallo &middot; in rosso le fallite</div>
+      <svg viewBox="0 0 {{ .Larghezza }} {{ .Altezza }}" preserveAspectRatio="none" role="img"
+           aria-label="andamento del traffico">
+        {{ range .Barre }}
+        <rect class="barra" x="{{ .X }}" y="{{ .Y }}" width="{{ .W }}" height="{{ .H }}">
+          <title>{{ .Titolo }}</title>
+        </rect>
+        {{ if gt .HErrori 0.0 }}
+        <rect class="barra-errori" x="{{ .X }}" y="{{ .Y }}" width="{{ .W }}" height="{{ .HErrori }}"/>
+        {{ end }}
+        {{ end }}
+      </svg>
+      <div class="assi">
+        {{ range .Etichette }}<span>{{ .Testo }}</span>{{ end }}
+      </div>
+    </div>
+  </div>
+  {{ end }}
 {{ end }}
 
 {{ define "chiusura" }}

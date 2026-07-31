@@ -26,10 +26,23 @@ type Server struct {
 	tmpl     *template.Template
 	http     *http.Server
 	apdexTMS float64
+	token    string
+	stato    StatoDaemon
 }
 
-// New costruisce il server sull'indirizzo indicato.
-func New(addr string, st *store.Store, log *slog.Logger, apdexTMS float64) (*Server, error) {
+// StatoDaemon fornisce i contatori interni per la pagina di auto-osservazione.
+type StatoDaemon func() Stato
+
+// Opzioni raccoglie la configurazione del server.
+type Opzioni struct {
+	Addr     string
+	ApdexTMS float64
+	Token    string
+	Stato    StatoDaemon
+}
+
+// New costruisce il server.
+func New(st *store.Store, log *slog.Logger, opts Opzioni) (*Server, error) {
 	funcs := template.FuncMap{
 		"ms":      func(v float64) string { return fmt.Sprintf("%.1f ms", v) },
 		"num":     func(v uint64) string { return strconv.FormatUint(v, 10) },
@@ -37,6 +50,12 @@ func New(addr string, st *store.Store, log *slog.Logger, apdexTMS float64) (*Ser
 		"rate":    func(v float64) string { return fmt.Sprintf("%.1f/min", v) },
 		"seconds": func(v float64) string { return fmt.Sprintf("%.2f s", v/1000) },
 		"quota":   quota,
+		"perRichiesta": func(totale float64, n uint64) float64 {
+			if n == 0 {
+				return 0
+			}
+			return totale / float64(n)
+		},
 		"pct":     func(v float64) string { return strconv.FormatFloat(v, 'f', 3, 64) },
 		"offset":  func(ns uint64) string { return fmt.Sprintf("+%.1f ms", float64(ns)/1e6) },
 		"orario":  func(ts int64) string { return time.Unix(ts, 0).Format("15:04:05") },
@@ -56,19 +75,31 @@ func New(addr string, st *store.Store, log *slog.Logger, apdexTMS float64) (*Ser
 		return nil, fmt.Errorf("template: %w", err)
 	}
 
-	s := &Server{store: st, log: log, tmpl: tmpl, apdexTMS: apdexTMS}
+	s := &Server{
+		store:    st,
+		log:      log,
+		tmpl:     tmpl,
+		apdexTMS: opts.ApdexTMS,
+		token:    opts.Token,
+		stato:    opts.Stato,
+	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /{$}", s.handleOverview)
-	mux.HandleFunc("GET /database", s.handleDatabase)
-	mux.HandleFunc("GET /esterne", s.handleExternals)
-	mux.HandleFunc("GET /errori", s.handleErrors)
-	mux.HandleFunc("GET /tracce", s.handleTraces)
-	mux.HandleFunc("GET /traccia", s.handleTrace)
+	mux.HandleFunc("GET /{$}", s.autentica(s.handleOverview))
+	mux.HandleFunc("GET /transazione", s.autentica(s.handleTransaction))
+	mux.HandleFunc("GET /database", s.autentica(s.handleDatabase))
+	mux.HandleFunc("GET /esterne", s.autentica(s.handleExternals))
+	mux.HandleFunc("GET /errori", s.autentica(s.handleErrors))
+	mux.HandleFunc("GET /tracce", s.autentica(s.handleTraces))
+	mux.HandleFunc("GET /traccia", s.autentica(s.handleTrace))
+	mux.HandleFunc("GET /stato", s.autentica(s.handleStato))
+
+	// La salute resta fuori dall'autenticazione: serve a un supervisore per
+	// sapere se il processo risponde, e non espone dati raccolti.
 	mux.HandleFunc("GET /salute", s.handleHealth)
 
 	s.http = &http.Server{
-		Addr:              addr,
+		Addr:              opts.Addr,
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
@@ -146,6 +177,14 @@ type datiPanoramica struct {
 	comune
 	Summary store.Summary
 	Txns    []store.TxnStat
+	Grafico Grafico
+}
+
+type datiTransazione struct {
+	comune
+	Dettaglio store.DettaglioTxn
+	Grafico   Grafico
+	Tracce    []store.TraceRow
 }
 
 type datiDatabase struct {
@@ -185,10 +224,50 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	punti, passo, err := s.store.Serie(since, "")
+	if err != nil {
+		s.fail(w, "serie temporale", err)
+		return
+	}
+
 	s.render(w, "panoramica.html", datiPanoramica{
 		comune:  newComune("Panoramica", "panoramica", minuti),
 		Summary: summary,
 		Txns:    txns,
+		Grafico: costruisciGrafico(punti, passo),
+	})
+}
+
+func (s *Server) handleTransaction(w http.ResponseWriter, r *http.Request) {
+	minuti, since := intervallo(r)
+
+	nome := r.URL.Query().Get("nome")
+	if nome == "" {
+		http.Error(w, "manca il nome della transazione", http.StatusBadRequest)
+		return
+	}
+
+	dettaglio, err := s.store.Dettaglio(since, nome)
+	if err != nil {
+		s.fail(w, "dettaglio della transazione", err)
+		return
+	}
+	punti, passo, err := s.store.Serie(since, nome)
+	if err != nil {
+		s.fail(w, "serie della transazione", err)
+		return
+	}
+	tracce, err := s.store.TracceDi(since, nome, 25)
+	if err != nil {
+		s.fail(w, "trace della transazione", err)
+		return
+	}
+
+	s.render(w, "transazione.html", datiTransazione{
+		comune:    newComune(nome, "panoramica", minuti),
+		Dettaglio: dettaglio,
+		Grafico:   costruisciGrafico(punti, passo),
+		Tracce:    tracce,
 	})
 }
 

@@ -327,6 +327,9 @@ bool orma_proto_encode(const orma_txn *txn, orma_buf *out)
 	if (!orma_put_u32(out, txn->errors)) return false;
 	if (!orma_put_u32(out, txn->warnings)) return false;
 	if (!orma_put_u32(out, txn->spans_dropped)) return false;
+	/* Quante transazioni non sono arrivate al daemon dall'ultima consegna
+	 * riuscita: senza questo campo il daemon non puo' sapere di essere cieco. */
+	if (!orma_put_u32(out, (uint32_t)ORMA_G(dropped_frames))) return false;
 
 	/* Span: la radice piu' i figli raccolti dagli hook. */
 	if (!orma_put_u32(out, 1 + ORMA_G(span_count))) return false;

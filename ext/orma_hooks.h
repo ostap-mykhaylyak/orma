@@ -9,4 +9,8 @@
  * potrebbero non esistere ancora. Idempotente. */
 void orma_hooks_install(void);
 
+/* Svuota la mappa degli statement preparati: vale per una richiesta sola. */
+void orma_hooks_reset(void);
+void orma_hooks_free(void);
+
 #endif /* ORMA_HOOKS_H */

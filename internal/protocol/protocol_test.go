@@ -47,6 +47,7 @@ func validFrame() []byte {
 	f.u32(0) // errori
 	f.u32(0) // warning
 	f.u32(0) // span scartati
+	f.u32(0) // frame persi dall'agent
 
 	f.u32(1) // uno span
 	f.raw(16)

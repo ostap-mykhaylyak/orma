@@ -14,7 +14,7 @@ LDFLAGS := -X $(MODULE)/internal/version.Version=$(VERSION) \
 
 DOCKER_RUN = docker run --rm -v "$(CURDIR)":/src -w /src/ext $(IMAGE) sh -c
 
-.PHONY: all image ext ext-test ext-clean daemon test smoke clean
+.PHONY: all image ext ext-test ext-clean daemon test smoke asan overhead wordpress clean
 
 all: ext daemon
 
@@ -41,6 +41,20 @@ test:
 # e verifica che lo conti e si fermi pulito.
 smoke: image daemon
 	docker run --rm -v "$(CURDIR)":/src $(IMAGE) sh /src/test/smoke.sh
+
+# L'estensione gira dentro ogni processo PHP: un accesso fuori dai limiti non
+# e' un dato sbagliato, e' il sito giu'.
+asan: image
+	docker run --rm -v "$(CURDIR)":/src $(IMAGE) sh /src/build/asan.sh
+
+overhead: image daemon
+	docker run --rm -v "$(CURDIR)":/src $(IMAGE) sh /src/test/overhead.sh
+
+# php-fpm vero, WordPress vero, con giro di controllo a estensione spenta.
+# E' l'unico test che esercita worker vivi migliaia di richieste.
+wordpress: ext daemon
+	cd test/fpm && docker compose down -v
+	cd test/fpm && docker compose up --build --abort-on-container-exit --exit-code-from web
 
 clean: ext-clean
 	rm -rf dist

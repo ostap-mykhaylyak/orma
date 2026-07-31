@@ -1,0 +1,30 @@
+name: orma-prova-fpm
+
+services:
+  db:
+    image: mariadb:11
+    environment:
+      MARIADB_ROOT_PASSWORD: radice
+      MARIADB_DATABASE: wordpress
+      MARIADB_USER: wordpress
+      MARIADB_PASSWORD: wordpress
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+    tmpfs:
+      - /var/lib/mysql
+
+  web:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ../..:/src:ro
+      - risultati:/risultati
+    command: ["sh", "/src/test/fpm/prova.sh"]
+
+volumes:
+  risultati:
