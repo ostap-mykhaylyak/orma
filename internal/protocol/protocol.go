@@ -16,15 +16,35 @@ import (
 	"math"
 )
 
-// Version e' la versione del protocollo supportata.
-const Version = 1
+// Version e' la versione del protocollo supportata. La 2 aggiunge il conteggio
+// dei warning e la sezione degli eventi di errore in coda al frame.
+const Version = 2
 
 // Limiti di sanita': un mittente corretto non li raggiunge mai.
 const (
 	maxStrings = 4096
 	maxSpans   = 4096
 	maxAttrs   = 256
+	maxEvents  = 256
 )
+
+// Severity distingue cio' che rompe una richiesta da cio' che la sporca.
+type Severity uint8
+
+const (
+	SeveritaAvviso Severity = 0
+	SeveritaErrore Severity = 1
+)
+
+// Event e' un errore PHP o un'eccezione lanciata.
+type Event struct {
+	Class    string
+	Message  string
+	File     string
+	Line     uint32
+	Severity Severity
+	UnixNano uint64
+}
 
 // SpanKind segue la classificazione di OpenTelemetry.
 type SpanKind uint8
@@ -109,9 +129,14 @@ type Transaction struct {
 	PeakMemory    uint64
 	CPUUserNano   uint64
 	CPUSysNano    uint64
-	Errors        uint32
-	SpansDropped  uint32
-	Spans         []Span
+	// Errors conta i soli eventi fatali: e' su questo che si decide se la
+	// transazione e' andata male. I warning stanno a parte, perche' un sito
+	// pieno di deprecation non e' un sito rotto.
+	Errors       uint32
+	Warnings     uint32
+	SpansDropped uint32
+	Spans        []Span
+	Events       []Event
 }
 
 // ErrVersion indica un frame prodotto da una versione di protocollo diversa.
@@ -226,6 +251,7 @@ func Decode(frame []byte) (*Transaction, error) {
 	txn.CPUUserNano = r.u64()
 	txn.CPUSysNano = r.u64()
 	txn.Errors = r.u32()
+	txn.Warnings = r.u32()
 	txn.SpansDropped = r.u32()
 
 	spanCount := r.u32()
@@ -250,10 +276,46 @@ func Decode(frame []byte) (*Transaction, error) {
 		txn.Spans = append(txn.Spans, span)
 	}
 
+	events, err := decodeEvents(r, lookup)
+	if err != nil {
+		return nil, err
+	}
+	txn.Events = events
+
 	if r.err != nil {
 		return nil, r.err
 	}
 	return txn, nil
+}
+
+func decodeEvents(r *reader, lookup func(uint32) string) ([]Event, error) {
+	count := r.u32()
+	if r.err != nil {
+		return nil, r.err
+	}
+	if count > maxEvents {
+		return nil, fmt.Errorf("troppi eventi dichiarati: %d, massimo %d", count, maxEvents)
+	}
+	// Ogni evento occupa almeno 25 byte.
+	if int(count)*25 > r.remaining() {
+		return nil, fmt.Errorf("dichiarati %d eventi ma restano %d byte", count, r.remaining())
+	}
+
+	out := make([]Event, 0, count)
+	for i := uint32(0); i < count; i++ {
+		var e Event
+		e.Class = lookup(r.u32())
+		e.Message = lookup(r.u32())
+		e.File = lookup(r.u32())
+		e.Line = r.u32()
+		e.Severity = Severity(r.u8())
+		e.UnixNano = r.u64()
+		if r.err != nil {
+			return nil, r.err
+		}
+		out = append(out, e)
+	}
+	return out, nil
 }
 
 func decodeStringTable(r *reader) ([]string, error) {

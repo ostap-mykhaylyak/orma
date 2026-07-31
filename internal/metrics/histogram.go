@@ -86,6 +86,37 @@ func (h *Histogram) Percentile(p float64) float64 {
 	return bucketValueMS(Buckets - 1)
 }
 
+// Apdex misura la soddisfazione rispetto a una soglia T in millisecondi:
+// le richieste entro T contano intere, quelle entro 4T contano meta', le altre
+// non contano. Un istogramma vuoto vale 1: nessuna richiesta, nessun scontento.
+//
+// Si calcola dall'istogramma, quindi eredita il suo errore di quantizzazione:
+// una richiesta a cavallo di T puo' finire dalla parte sbagliata.
+func (h *Histogram) Apdex(tMS float64) float64 {
+	if tMS <= 0 {
+		return 1
+	}
+
+	var total, satisfied, tolerating uint64
+	for i, c := range h {
+		if c == 0 {
+			continue
+		}
+		total += uint64(c)
+		switch v := bucketValueMS(i); {
+		case v <= tMS:
+			satisfied += uint64(c)
+		case v <= 4*tMS:
+			tolerating += uint64(c)
+		}
+	}
+
+	if total == 0 {
+		return 1
+	}
+	return (float64(satisfied) + float64(tolerating)/2) / float64(total)
+}
+
 // Encode serializza l'istogramma per lo storage.
 func (h *Histogram) Encode() []byte {
 	out := make([]byte, Buckets*4)

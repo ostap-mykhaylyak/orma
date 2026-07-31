@@ -243,7 +243,7 @@ func doStart(cfg config.Config, configPath string) error {
 	}
 	defer ln.Close()
 
-	srv, err := web.New(cfg.Listen, st, log)
+	srv, err := web.New(cfg.Listen, st, log, float64(cfg.ApdexTMS))
 	if err != nil {
 		return err
 	}

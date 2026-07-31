@@ -23,7 +23,10 @@ func validFrame() []byte {
 	f.u8(Version)
 	f.u8(0)
 
-	strs := []string{"", "prova", "srv1", "/prodotti/{id}", "http.request.method", "GET", "php.memory.peak_bytes"}
+	strs := []string{
+		"", "prova", "srv1", "/prodotti/{id}", "http.request.method", "GET",
+		"php.memory.peak_bytes", "E_WARNING", "Undefined variable $x", "/var/www/indice.php",
+	}
 	f.u32(uint32(len(strs)))
 	for _, s := range strs {
 		f.u16(uint16(len(s)))
@@ -41,8 +44,9 @@ func validFrame() []byte {
 	f.u64(2097152)
 	f.u64(1000)
 	f.u64(2000)
-	f.u32(0)
-	f.u32(0)
+	f.u32(0) // errori
+	f.u32(0) // warning
+	f.u32(0) // span scartati
 
 	f.u32(1) // uno span
 	f.raw(16)
@@ -60,6 +64,15 @@ func validFrame() []byte {
 	f.u32(6)
 	f.u8(uint8(AttrInt64))
 	f.u64(2097152)
+
+	// Un evento di errore.
+	f.u32(1)
+	f.u32(7) // classe
+	f.u32(8) // messaggio
+	f.u32(9) // file
+	f.u32(42)
+	f.u8(uint8(SeveritaErrore))
+	f.u64(1700000000000000000)
 
 	return f.b
 }
@@ -90,6 +103,14 @@ func TestDecodeValido(t *testing.T) {
 	}
 	if span.Attrs[1].Type != AttrInt64 || span.Attrs[1].Int != 2097152 {
 		t.Errorf("attributo intero errato: %+v", span.Attrs[1])
+	}
+
+	if len(txn.Events) != 1 {
+		t.Fatalf("attesi 1 evento, trovati %d", len(txn.Events))
+	}
+	ev := txn.Events[0]
+	if ev.Class != "E_WARNING" || ev.Line != 42 || ev.Severity != SeveritaErrore {
+		t.Errorf("evento errato: %+v", ev)
 	}
 }
 

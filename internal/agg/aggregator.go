@@ -159,6 +159,27 @@ func (a *Aggregator) Add(txn *protocol.Transaction) {
 		addCategory(w, store.Key{App: app, Txn: name, Kind: kind, Category: store.CategoriaEsterne}, extNS)
 	}
 
+	for i := range txn.Events {
+		ev := &txn.Events[i]
+		key := store.ErrKey{
+			App:         app,
+			Fingerprint: store.Fingerprint(ev.Class, ev.Message, ev.File, ev.Line),
+		}
+		b := w.Errors[key]
+		if b == nil {
+			b = &store.ErrBucket{
+				Class:    ev.Class,
+				Message:  ev.Message,
+				File:     ev.File,
+				Line:     ev.Line,
+				Txn:      name,
+				Severity: uint8(ev.Severity),
+			}
+			w.Errors[key] = b
+		}
+		b.Count++
+	}
+
 	// Il trace completo si conserva solo se e' lento o se e' andato male: e'
 	// questa regola che tiene lo storage proporzionale al numero di
 	// transazioni distinte invece che al traffico.
@@ -274,8 +295,9 @@ func classify(span *protocol.Span) (category, value string) {
 	return "", ""
 }
 
-// isError considera errore un 5xx o una transazione che ha registrato errori
-// PHP. Il conteggio degli errori applicativi diventa preciso al M4.
+// isError considera fallita una transazione con un errore PHP di classe fatale
+// oppure con uno stato 5xx. I warning non contano: un sito pieno di
+// deprecation non e' un sito rotto.
 func isError(txn *protocol.Transaction) bool {
 	return txn.Errors > 0 || txn.HTTPStatus >= 500
 }
@@ -326,6 +348,6 @@ func (a *Aggregator) flush(all bool) {
 		}
 		a.log.Debug("finestra scritta", "finestra", ts,
 			"serie", len(w.Metrics), "query", len(w.SQL),
-			"host", len(w.Hosts), "trace", len(w.Traces))
+			"host", len(w.Hosts), "trace", len(w.Traces), "errori", len(w.Errors))
 	}
 }

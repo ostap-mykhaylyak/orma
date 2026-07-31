@@ -150,6 +150,34 @@ static uint32_t orma_intern_cstr(orma_strtab *t, const char *s)
 	return orma_intern(t, s, s ? strlen(s) : 0);
 }
 
+/* Interna le stringhe degli eventi di errore. */
+static void orma_intern_events(orma_strtab *tab, const orma_txn *txn)
+{
+	for (uint32_t i = 0; i < txn->event_count; i++) {
+		const orma_error *ev = &txn->events[i];
+		orma_intern(tab, orma_arena_str(ev->class_off), ev->class_len);
+		orma_intern(tab, orma_arena_str(ev->msg_off), ev->msg_len);
+		orma_intern(tab, orma_arena_str(ev->file_off), ev->file_len);
+	}
+}
+
+static bool orma_emit_events(orma_buf *out, orma_strtab *tab, const orma_txn *txn)
+{
+	if (!orma_put_u32(out, txn->event_count)) return false;
+
+	for (uint32_t i = 0; i < txn->event_count; i++) {
+		const orma_error *ev = &txn->events[i];
+
+		if (!orma_put_u32(out, orma_intern(tab, orma_arena_str(ev->class_off), ev->class_len))) return false;
+		if (!orma_put_u32(out, orma_intern(tab, orma_arena_str(ev->msg_off), ev->msg_len))) return false;
+		if (!orma_put_u32(out, orma_intern(tab, orma_arena_str(ev->file_off), ev->file_len))) return false;
+		if (!orma_put_u32(out, ev->line)) return false;
+		if (!orma_put_u8(out, ev->severita)) return false;
+		if (!orma_put_u64(out, ev->unix_nano)) return false;
+	}
+	return true;
+}
+
 /* Interna nomi e valori degli span figli, senza emettere nulla. */
 static void orma_intern_children(orma_strtab *tab)
 {
@@ -221,6 +249,7 @@ bool orma_proto_encode(const orma_txn *txn, orma_buf *out)
 	uint32_t mem_key    = orma_intern_cstr(&tab, "php.memory.peak_bytes");
 
 	orma_intern_children(&tab);
+	orma_intern_events(&tab, txn);
 
 	orma_buf_reset(out);
 
@@ -254,6 +283,7 @@ bool orma_proto_encode(const orma_txn *txn, orma_buf *out)
 	if (!orma_put_u64(out, txn->cpu_user_nano)) return false;
 	if (!orma_put_u64(out, txn->cpu_sys_nano)) return false;
 	if (!orma_put_u32(out, txn->errors)) return false;
+	if (!orma_put_u32(out, txn->warnings)) return false;
 	if (!orma_put_u32(out, txn->spans_dropped)) return false;
 
 	/* Span: la radice piu' i figli raccolti dagli hook. */
@@ -284,6 +314,7 @@ bool orma_proto_encode(const orma_txn *txn, orma_buf *out)
 	if (!orma_put_u64(out, txn->peak_memory)) return false;
 
 	if (!orma_emit_children(out, &tab, txn)) return false;
+	if (!orma_emit_events(out, &tab, txn)) return false;
 
 	/* Patch della lunghezza: byte che seguono il campo stesso. */
 	uint32_t frame_len = (uint32_t)(out->len - 4);

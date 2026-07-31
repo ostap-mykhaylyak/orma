@@ -21,14 +21,15 @@ var templatesFS embed.FS
 
 // Server e' la UI HTTP.
 type Server struct {
-	store *store.Store
-	log   *slog.Logger
-	tmpl  *template.Template
-	http  *http.Server
+	store    *store.Store
+	log      *slog.Logger
+	tmpl     *template.Template
+	http     *http.Server
+	apdexTMS float64
 }
 
 // New costruisce il server sull'indirizzo indicato.
-func New(addr string, st *store.Store, log *slog.Logger) (*Server, error) {
+func New(addr string, st *store.Store, log *slog.Logger, apdexTMS float64) (*Server, error) {
 	funcs := template.FuncMap{
 		"ms":      func(v float64) string { return fmt.Sprintf("%.1f ms", v) },
 		"num":     func(v uint64) string { return strconv.FormatUint(v, 10) },
@@ -39,6 +40,7 @@ func New(addr string, st *store.Store, log *slog.Logger) (*Server, error) {
 		"pct":     func(v float64) string { return strconv.FormatFloat(v, 'f', 3, 64) },
 		"offset":  func(ns uint64) string { return fmt.Sprintf("+%.1f ms", float64(ns)/1e6) },
 		"orario":  func(ts int64) string { return time.Unix(ts, 0).Format("15:04:05") },
+		"apdex":   func(v float64) string { return strconv.FormatFloat(v, 'f', 2, 64) },
 		// Il rientro del waterfall e' limitato: un albero profondo non deve
 		// spingere i nomi fuori dalla colonna.
 		"indent": func(depth int) string {
@@ -54,12 +56,13 @@ func New(addr string, st *store.Store, log *slog.Logger) (*Server, error) {
 		return nil, fmt.Errorf("template: %w", err)
 	}
 
-	s := &Server{store: st, log: log, tmpl: tmpl}
+	s := &Server{store: st, log: log, tmpl: tmpl, apdexTMS: apdexTMS}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", s.handleOverview)
 	mux.HandleFunc("GET /database", s.handleDatabase)
 	mux.HandleFunc("GET /esterne", s.handleExternals)
+	mux.HandleFunc("GET /errori", s.handleErrors)
 	mux.HandleFunc("GET /tracce", s.handleTraces)
 	mux.HandleFunc("GET /traccia", s.handleTrace)
 	mux.HandleFunc("GET /salute", s.handleHealth)
@@ -171,7 +174,7 @@ func intervallo(r *http.Request) (minuti int, since int64) {
 func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 	minuti, since := intervallo(r)
 
-	summary, err := s.store.Summary(since)
+	summary, err := s.store.Summary(since, s.apdexTMS)
 	if err != nil {
 		s.fail(w, "riepilogo", err)
 		return
@@ -230,6 +233,39 @@ func (s *Server) handleExternals(w http.ResponseWriter, r *http.Request) {
 		comune: newComune("Esterne", "esterne", minuti),
 		Totale: totale,
 		Host:   host,
+	})
+}
+
+type datiErrori struct {
+	comune
+	Errori  []store.ErrStat
+	Fatali  uint64
+	Avvisi  uint64
+}
+
+func (s *Server) handleErrors(w http.ResponseWriter, r *http.Request) {
+	minuti, since := intervallo(r)
+
+	errori, err := s.store.Errors(since, 100)
+	if err != nil {
+		s.fail(w, "elenco degli errori", err)
+		return
+	}
+
+	var fatali, avvisi uint64
+	for _, e := range errori {
+		if e.Fatale() {
+			fatali += e.Count
+		} else {
+			avvisi += e.Count
+		}
+	}
+
+	s.render(w, "errori.html", datiErrori{
+		comune: newComune("Errori", "errori", minuti),
+		Errori: errori,
+		Fatali: fatali,
+		Avvisi: avvisi,
 	})
 }
 

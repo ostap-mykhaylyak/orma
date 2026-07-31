@@ -58,6 +58,8 @@ foreach ([
   "/a/b/c/d/e/f/g/h/i/j/k/l",
   "/carico",
   "/carico?esterna=1",
+  "/carico?avvisi=1",
+  "/guasto",
 ] as $p) { @file_get_contents("http://127.0.0.1:8080" . $p); }
 '
 sleep 1
@@ -88,7 +90,7 @@ grep -E 'msg=(ingestione|"frame malformato)' /tmp/orma.log
 echo
 echo "== metriche per categoria =="
 sqlite3 -header -column /var/lib/orma/orma.db \
-	"SELECT txn_name, category, count, ROUND(sum_ns/1e6,2) AS tot_ms
+	"SELECT txn_name, category, count, errors AS falliti, ROUND(sum_ns/1e6,2) AS tot_ms
 	   FROM metrics_1m ORDER BY txn_name, category;" 2>/dev/null || echo "(nessuna)"
 
 echo
@@ -102,6 +104,12 @@ echo "== chiamate esterne =="
 sqlite3 -header -column /var/lib/orma/orma.db \
 	"SELECT host, count, ROUND(sum_ns/1e6,2) AS tot_ms
 	   FROM externals ORDER BY sum_ns DESC;" 2>/dev/null || echo "(tabella assente)"
+
+echo
+echo "== errori raccolti =="
+sqlite3 -header -column /var/lib/orma/orma.db \
+	"SELECT class, substr(message,1,44) AS messaggio, severity AS grave, count
+	   FROM errors ORDER BY severity DESC, count DESC;" 2>/dev/null || echo "(tabella assente)"
 
 echo
 echo "== trace conservati =="
@@ -124,12 +132,14 @@ sleep 1
 php -r 'echo @file_get_contents("http://127.0.0.1:8737/?minuti=60");' >/src/dist/panoramica.html
 php -r 'echo @file_get_contents("http://127.0.0.1:8737/database?minuti=60");' >/src/dist/database.html
 php -r 'echo @file_get_contents("http://127.0.0.1:8737/esterne?minuti=60");' >/src/dist/esterne.html
+php -r 'echo @file_get_contents("http://127.0.0.1:8737/errori?minuti=60");' >/src/dist/errori.html
 php -r 'echo @file_get_contents("http://127.0.0.1:8737/tracce?minuti=60");' >/src/dist/tracce.html
 id=$(sqlite3 /var/lib/orma/orma.db "SELECT id FROM traces ORDER BY duration_ns DESC LIMIT 1;")
 php -r "echo @file_get_contents('http://127.0.0.1:8737/traccia?id=$id');" >/src/dist/traccia.html
 echo "panoramica: $(wc -c </src/dist/panoramica.html) byte"
 echo "database:   $(wc -c </src/dist/database.html) byte"
 echo "esterne:    $(wc -c </src/dist/esterne.html) byte"
+echo "errori:     $(wc -c </src/dist/errori.html) byte"
 echo "tracce:     $(wc -c </src/dist/tracce.html) byte"
 echo "traccia:    $(wc -c </src/dist/traccia.html) byte"
 /src/dist/orma stop >/dev/null

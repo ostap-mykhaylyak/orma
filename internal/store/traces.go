@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 )
@@ -228,7 +229,7 @@ func (s *Store) Trace(id int64) (*Trace, error) {
 	return &t, nil
 }
 
-func writeTraces(exec func(string, ...any) error, appIDs map[string]int64, traces []*Trace) error {
+func writeTraces(tx *sql.Tx, appIDs map[string]int64, traces []*Trace) error {
 	for _, t := range traces {
 		payload, err := json.Marshal(t.Spans)
 		if err != nil {
@@ -238,7 +239,7 @@ func writeTraces(exec func(string, ...any) error, appIDs map[string]int64, trace
 		if t.HasError {
 			hasError = 1
 		}
-		if err := exec(
+		if _, err := tx.Exec(
 			`INSERT INTO traces (app_id, ts, txn_name, kind, duration_ns, http_status, has_error, spans)
 			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 			appIDs[t.App], t.TS, t.Name, t.Kind, int64(t.DurationNS),

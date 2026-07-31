@@ -22,7 +22,7 @@ import (
 // schemaVersion cambia a ogni modifica incompatibile delle tabelle. Prima
 // della 1.0 le tabelle vengono ricreate invece di essere migrate: i dati di
 // telemetria sono rimpiazzabili, il codice di migrazione no.
-const schemaVersion = 3
+const schemaVersion = 4
 
 // Categorie di metrica.
 const (
@@ -92,6 +92,7 @@ type Window struct {
 	SQL     map[SQLKey]*Simple
 	Hosts   map[HostKey]*Simple
 	Traces  []*Trace
+	Errors  map[ErrKey]*ErrBucket
 }
 
 // NewWindow costruisce una finestra vuota.
@@ -100,12 +101,14 @@ func NewWindow() *Window {
 		Metrics: make(map[Key]*Bucket),
 		SQL:     make(map[SQLKey]*Simple),
 		Hosts:   make(map[HostKey]*Simple),
+		Errors:  make(map[ErrKey]*ErrBucket),
 	}
 }
 
 // Empty indica se non c'e' nulla da scrivere.
 func (w *Window) Empty() bool {
-	return len(w.Metrics) == 0 && len(w.SQL) == 0 && len(w.Hosts) == 0 && len(w.Traces) == 0
+	return len(w.Metrics) == 0 && len(w.SQL) == 0 && len(w.Hosts) == 0 &&
+		len(w.Traces) == 0 && len(w.Errors) == 0
 }
 
 // Store e' l'accesso al database.
@@ -207,7 +210,7 @@ func migrate(db *sql.DB, log *slog.Logger) error {
 			log.Warn("schema del database obsoleto, le metriche esistenti vengono scartate",
 				"trovata", current, "attesa", schemaVersion)
 		}
-		for _, t := range []string{"metrics_1m", "slow_sql", "externals", "traces"} {
+		for _, t := range []string{"metrics_1m", "slow_sql", "externals", "traces", "errors"} {
 			if _, err := db.Exec(`DROP TABLE IF EXISTS ` + t); err != nil {
 				return fmt.Errorf("rimozione di %s: %w", t, err)
 			}
@@ -219,6 +222,9 @@ func migrate(db *sql.DB, log *slog.Logger) error {
 	}
 	if _, err := db.Exec(traceSchema); err != nil {
 		return fmt.Errorf("creazione dello schema dei trace: %w", err)
+	}
+	if _, err := db.Exec(errorSchema); err != nil {
+		return fmt.Errorf("creazione dello schema degli errori: %w", err)
 	}
 	if _, err := db.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, schemaVersion)); err != nil {
 		return fmt.Errorf("scrittura di user_version: %w", err)
@@ -304,6 +310,11 @@ func (s *Store) WriteWindow(window int64, w *Window) error {
 			return err
 		}
 	}
+	for key := range w.Errors {
+		if err := resolve(key.App); err != nil {
+			return err
+		}
+	}
 
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -339,10 +350,10 @@ func (s *Store) WriteWindow(window int64, w *Window) error {
 		}
 	}
 
-	if err := writeTraces(func(q string, args ...any) error {
-		_, err := tx.Exec(q, args...)
+	if err := writeTraces(tx, ids, w.Traces); err != nil {
 		return err
-	}, ids, w.Traces); err != nil {
+	}
+	if err := writeErrors(tx, ids, window, w.Errors); err != nil {
 		return err
 	}
 
@@ -435,6 +446,8 @@ type Summary struct {
 	P50MS            float64
 	P95MS            float64
 	P99MS            float64
+	Apdex            float64
+	ApdexTMS         float64
 }
 
 // ErrorRate e' la percentuale di richieste in errore.
@@ -454,8 +467,9 @@ func (s Summary) AvgMS() float64 {
 }
 
 // Summary calcola il riepilogo sulle finestre a partire da since.
-func (s *Store) Summary(since int64) (Summary, error) {
+func (s *Store) Summary(since int64, apdexTMS float64) (Summary, error) {
 	var out Summary
+	out.ApdexTMS = apdexTMS
 
 	rows, err := s.db.Query(
 		`SELECT count, errors, sum_ns, histogram
@@ -486,6 +500,7 @@ func (s *Store) Summary(since int64) (Summary, error) {
 	out.P50MS = total.Percentile(0.50)
 	out.P95MS = total.Percentile(0.95)
 	out.P99MS = total.Percentile(0.99)
+	out.Apdex = total.Apdex(apdexTMS)
 
 	if elapsedMin := float64(time.Now().Unix()-since) / 60; elapsedMin > 0 {
 		out.ThroughputPerMin = float64(out.Requests) / elapsedMin

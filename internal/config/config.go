@@ -32,6 +32,9 @@ type Config struct {
 	TraceMaxPerMin int `yaml:"trace_max_per_min"`
 	// MaxTxnNames e' il tetto ai nomi di transazione distinti per minuto.
 	MaxTxnNames int `yaml:"max_txn_names"`
+	// ApdexTMS e' la soglia di soddisfazione, in millisecondi: entro questa
+	// una richiesta conta intera, entro il quadruplo conta meta'.
+	ApdexTMS int `yaml:"apdex_t_ms"`
 }
 
 // Default restituisce la configurazione predefinita.
@@ -46,6 +49,7 @@ func Default() Config {
 		TraceThresholdMS: 500,
 		TraceMaxPerMin:   20,
 		MaxTxnNames:      5000,
+		ApdexTMS:         500,
 	}
 }
 
@@ -103,6 +107,9 @@ func (c Config) Validate() error {
 	if c.MaxTxnNames <= 0 {
 		return fmt.Errorf("max_txn_names deve essere maggiore di zero")
 	}
+	if c.ApdexTMS <= 0 {
+		return fmt.Errorf("apdex_t_ms deve essere maggiore di zero")
+	}
 	return nil
 }
 
@@ -139,4 +146,8 @@ const Template = `# Configurazione di orma.
 # confluiscono in OtherTransaction/*. E' la valvola che impedisce a
 # un'applicazione con URL generati di riempire il database.
 #max_txn_names: 5000
+
+# Soglia di soddisfazione per l'apdex, in millisecondi: entro questa una
+# richiesta conta intera, entro il quadruplo conta meta', oltre non conta.
+#apdex_t_ms: 500
 `

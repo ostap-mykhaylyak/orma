@@ -6,6 +6,9 @@
     <div class="tile"><div class="k">Media</div><div class="v">{{ ms .Summary.AvgMS }}</div></div>
     <div class="tile"><div class="k">p95</div><div class="v">{{ ms .Summary.P95MS }}</div></div>
     <div class="tile"><div class="k">p99</div><div class="v">{{ ms .Summary.P99MS }}</div></div>
+    <div class="tile" title="Soglia di soddisfazione: {{ ms .Summary.ApdexTMS }}">
+      <div class="k">Apdex</div><div class="v">{{ apdex .Summary.Apdex }}</div>
+    </div>
     <div class="tile">
       <div class="k">Errori</div>
       <div class="v {{ if gt .Summary.Errors 0 }}err{{ end }}">{{ perc .Summary.ErrorRate }}</div>

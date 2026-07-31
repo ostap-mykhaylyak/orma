@@ -73,7 +73,7 @@ const char *orma_arena_str(uint32_t off)
 
 /* Copia una stringa nell'arena. Restituisce false se l'allocazione fallisce:
  * in quel caso il chiamante lascia il campo vuoto invece di perdere lo span. */
-static bool orma_arena_put(const char *s, size_t len, uint32_t *off, uint32_t *out_len)
+bool orma_arena_copy(const char *s, size_t len, uint32_t *off, uint32_t *out_len)
 {
 	if (s == NULL || len == 0) {
 		*off = 0;
@@ -112,7 +112,7 @@ int orma_span_open(const char *name, size_t name_len, uint8_t kind)
 	/* Sotto la funzione utente che sta eseguendo, non appesa alla radice:
 	 * cosi' nel waterfall la query sta dentro il metodo che l'ha lanciata. */
 	orma_observer_current_parent(span->parent_span_id);
-	orma_arena_put(name, name_len, &span->name_off, &span->name_len);
+	orma_arena_copy(name, name_len, &span->name_off, &span->name_len);
 
 	span->kind = kind;
 	span->status = ORMA_STATUS_OK;
@@ -176,7 +176,7 @@ void orma_span_record(const char *name, size_t name_len, uint8_t kind,
 	memset(span, 0, sizeof(*span));
 	memcpy(span->span_id, span_id, ORMA_SPAN_ID_LEN);
 	memcpy(span->parent_span_id, parent_id, ORMA_SPAN_ID_LEN);
-	orma_arena_put(name, name_len, &span->name_off, &span->name_len);
+	orma_arena_copy(name, name_len, &span->name_off, &span->name_len);
 
 	span->kind = kind;
 	span->status = status;
@@ -196,7 +196,7 @@ void orma_span_attr_str(int idx, const char *key, const char *value, size_t len)
 	attr->key = key;
 	attr->type = ORMA_ATTR_STRING;
 	attr->i64 = 0;
-	if (!orma_arena_put(value, len, &attr->str_off, &attr->str_len)) {
+	if (!orma_arena_copy(value, len, &attr->str_off, &attr->str_len)) {
 		return;
 	}
 	span->attr_count++;

@@ -14,8 +14,17 @@ extern zend_module_entry orma_module_entry;
 #define PHP_ORMA_VERSION "0.1.0"
 
 /* Versione del protocollo agent to daemon: deve restare allineata a
- * ingest.ProtocolVersion nel daemon. */
-#define ORMA_PROTOCOL_VERSION 1
+ * protocol.Version nel daemon. Alzata a 2 dal M4, che aggiunge la sezione
+ * degli errori in coda al frame: un daemon vecchio rifiuta il frame con un
+ * messaggio chiaro invece di interpretarlo male. */
+#define ORMA_PROTOCOL_VERSION 2
+
+/* Errori conservati per transazione. Oltre, si contano soltanto: cento
+ * warning identici non aggiungono informazione. */
+#define ORMA_MAX_ERRORS 32
+
+/* Lunghezze massime dei campi di un errore. */
+#define ORMA_MAX_ERROR_MESSAGE 500
 
 #define ORMA_TRACE_ID_LEN 16
 #define ORMA_SPAN_ID_LEN  8
@@ -98,6 +107,20 @@ typedef struct _orma_span {
 	orma_attr attrs[ORMA_MAX_SPAN_ATTRS];
 } orma_span;
 
+/* Severita' di un evento registrato. Solo ORMA_SEVERITA_ERRORE marca la
+ * transazione come fallita: un deprecation warning non e' un errore. */
+#define ORMA_SEVERITA_AVVISO 0
+#define ORMA_SEVERITA_ERRORE 1
+
+typedef struct _orma_error {
+	uint32_t class_off, class_len;
+	uint32_t msg_off, msg_len;
+	uint32_t file_off, file_len;
+	uint32_t line;
+	uint8_t  severita;
+	uint64_t unix_nano;
+} orma_error;
+
 typedef struct _orma_txn {
 	bool     active;
 	bool     background;
@@ -120,8 +143,12 @@ typedef struct _orma_txn {
 	const char *method;
 	uint16_t http_status;
 	uint64_t peak_memory;
-	uint32_t errors;
+	uint32_t errors;         /* solo eventi fatali: decide se la transazione e' fallita */
+	uint32_t warnings;
 	uint32_t spans_dropped;
+
+	orma_error events[ORMA_MAX_ERRORS];
+	uint32_t   event_count;
 } orma_txn;
 
 ZEND_BEGIN_MODULE_GLOBALS(orma)

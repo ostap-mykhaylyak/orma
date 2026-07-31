@@ -7,5 +7,10 @@ if (str_contains($_SERVER['REQUEST_URI'], 'carico')) {
     return true;
 }
 
+// Eccezione non catturata: 500 e E_ERROR, la transazione deve risultare fallita.
+if (str_contains($_SERVER['REQUEST_URI'], 'guasto')) {
+    throw new LogicException('configurazione del pagamento assente');
+}
+
 echo 'ok';
 return true;

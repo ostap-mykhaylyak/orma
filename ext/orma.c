@@ -17,6 +17,7 @@
 #include "orma_txn.h"
 #include "orma_span.h"
 #include "orma_observer.h"
+#include "orma_error.h"
 #include "orma_hooks.h"
 #include "orma_proto.h"
 #include "orma_sender.h"
@@ -74,12 +75,14 @@ PHP_MINIT_FUNCTION(orma)
 	/* La registrazione dell'observer e' di processo e va fatta prima che
 	 * qualunque op_array venga compilato: qui e' l'unico posto giusto. */
 	orma_observer_register();
+	orma_error_install();
 
 	return SUCCESS;
 }
 
 PHP_MSHUTDOWN_FUNCTION(orma)
 {
+	orma_error_uninstall();
 	UNREGISTER_INI_ENTRIES();
 	return SUCCESS;
 }

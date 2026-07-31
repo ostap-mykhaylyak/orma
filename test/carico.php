@@ -42,6 +42,24 @@ final class Rapporto
     }
 }
 
+function generaAvvisi(): void
+{
+    trigger_error('listino non aggiornato da tre giorni', E_USER_WARNING);
+
+    $riga = ['codice' => 'AB-1'];
+    echo $riga['prezzo'] ?? '';  // niente avviso: l'accesso e' protetto
+
+    $mancante = [];
+    echo @$mancante[0];          // E_WARNING: chiave non definita
+
+    try {
+        throw new RuntimeException('listino remoto irraggiungibile');
+    } catch (RuntimeException $e) {
+        // Catturata: viene comunque registrata al lancio, ma non fa fallire
+        // la transazione.
+    }
+}
+
 function chiamaEsterni(): void
 {
     $ch = curl_init('http://127.0.0.1:8080/router.php?token=segreto');
@@ -62,6 +80,10 @@ $rapporto->genera();
 
 $st = $pdo->prepare('SELECT email FROM utenti WHERE id = ?');
 $st->execute([1]);
+
+if (isset($_GET['avvisi'])) {
+    generaAvvisi();
+}
 
 if (isset($_GET['esterna'])) {
     chiamaEsterni();

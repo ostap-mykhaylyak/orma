@@ -1,0 +1,43 @@
+{{ template "intestazione" . }}
+
+  <div class="tiles">
+    <div class="tile">
+      <div class="k">Errori fatali</div>
+      <div class="v {{ if gt .Fatali 0 }}err{{ end }}">{{ num .Fatali }}</div>
+    </div>
+    <div class="tile"><div class="k">Avvisi</div><div class="v">{{ num .Avvisi }}</div></div>
+    <div class="tile"><div class="k">Forme distinte</div><div class="v">{{ len .Errori }}</div></div>
+  </div>
+
+  <h2>Errori per frequenza</h2>
+  <div class="scroll">
+    {{ if .Errori }}
+    <table>
+      <thead>
+        <tr><th>Errore</th><th>Transazione</th><th>Posizione</th><th>Occorrenze</th></tr>
+      </thead>
+      <tbody>
+        {{ range .Errori }}
+        <tr {{ if .Fatale }}class="errore"{{ end }}>
+          <td>
+            <span class="etichetta">{{ .Class }}</span>
+            {{ if .Fatale }}<span class="tag">fatale</span>{{ end }}
+            <span class="stmt">{{ .Message }}</span>
+          </td>
+          <td class="name">{{ .Txn }}</td>
+          <td class="name">{{ .Posizione }}</td>
+          <td class="n">{{ num .Count }}</td>
+        </tr>
+        {{ end }}
+      </tbody>
+    </table>
+    {{ else }}
+    <div class="empty">Nessun errore in questo intervallo.</div>
+    {{ end }}
+  </div>
+
+  <div class="legenda">
+    <span>Solo gli errori di classe fatale fanno contare la transazione come fallita: un sito pieno di deprecation non &egrave; un sito rotto. Le eccezioni compaiono al lancio, anche se poi vengono catturate.</span>
+  </div>
+
+{{ template "chiusura" . }}

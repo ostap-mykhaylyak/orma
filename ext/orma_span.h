@@ -31,4 +31,7 @@ void orma_spans_close_open(void);
  * nell'arena, che puo' rilocarla. */
 const char *orma_arena_str(uint32_t off);
 
+/* Copia una stringa nell'arena restituendone offset e lunghezza. */
+bool orma_arena_copy(const char *s, size_t len, uint32_t *off, uint32_t *out_len);
+
 #endif /* ORMA_SPAN_H */
