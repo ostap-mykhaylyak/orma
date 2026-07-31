@@ -16,7 +16,9 @@ set -e
 EXT="-d extension=/src/ext/modules/orma.so -d orma.app_name=prova -d orma.detail=2"
 
 echo "== preparazione =="
-/src/dist/orma --init >/dev/null
+# L'estensione qui si carica con -d, non si installa: l'installatore vero e'
+# provato in fondo.
+/src/dist/orma --init --senza-estensione >/dev/null
 sed -i 's|#log_level: info|log_level: debug|' /etc/orma/orma.yaml
 # Soglia bassa ma non nulla: nella prova le richieste durano pochi
 # millisecondi, e con 8 ms alcune restano sopra e altre sotto. Serve a
@@ -163,3 +165,12 @@ echo "errori:     $(wc -c </src/dist/errori.html) byte"
 echo "tracce:     $(wc -c </src/dist/tracce.html) byte"
 echo "traccia:    $(wc -c </src/dist/traccia.html) byte"
 /src/dist/orma stop >/dev/null
+
+echo
+echo "== installazione dell'estensione =="
+# L'installatore vero: copia nella extension_dir, scrive l'INI e verifica che
+# php la carichi davvero. Il container e' usa e getta, quindi si puo' provare
+# sul suo PHP.
+cp /src/ext/modules/orma.so /tmp/orma-da-installare.so
+rm -f /etc/orma/orma.yaml
+/src/dist/orma --init --extension /tmp/orma-da-installare.so

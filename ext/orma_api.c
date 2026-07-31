@@ -58,6 +58,9 @@ ZEND_END_ARG_INFO()
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_orma_get_trace_id, 0, 0, IS_STRING, 1)
 ZEND_END_ARG_INFO()
 
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_orma_get_traceparent, 0, 0, IS_STRING, 1)
+ZEND_END_ARG_INFO()
+
 /* --------------------------------------------------------------- utilita' */
 
 static bool orma_attiva(void)
@@ -275,6 +278,23 @@ PHP_FUNCTION(orma_get_trace_id)
 	RETURN_STRINGL(esadecimale, sizeof(esadecimale));
 }
 
+PHP_FUNCTION(orma_get_traceparent)
+{
+	ZEND_PARSE_PARAMETERS_NONE();
+
+	if (!orma_attiva()) {
+		RETURN_NULL();
+	}
+
+	char header[64];
+	size_t len = orma_txn_traceparent(header, sizeof(header));
+	if (len == 0) {
+		RETURN_NULL();
+	}
+
+	RETURN_STRINGL(header, len);
+}
+
 const zend_function_entry orma_functions[] = {
 	PHP_FE(orma_name_transaction,       arginfo_orma_name_transaction)
 	PHP_FE(orma_background_transaction, arginfo_orma_background_transaction)
@@ -284,5 +304,6 @@ const zend_function_entry orma_functions[] = {
 	PHP_FE(orma_end_span,               arginfo_orma_end_span)
 	PHP_FE(orma_notice_error,           arginfo_orma_notice_error)
 	PHP_FE(orma_get_trace_id,           arginfo_orma_get_trace_id)
+	PHP_FE(orma_get_traceparent,        arginfo_orma_get_traceparent)
 	PHP_FE_END
 };

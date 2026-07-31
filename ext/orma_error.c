@@ -31,6 +31,7 @@
 #include "orma_txn.h"
 
 #include <string.h>
+#include <strings.h>
 
 static void (*orma_prev_error_cb)(int type, zend_string *file, uint32_t line, zend_string *message);
 static void (*orma_prev_throw_hook)(zend_object *exception);
@@ -128,9 +129,44 @@ static void orma_error_cb(int type, zend_string *file, uint32_t line, zend_strin
 	}
 }
 
+/* Vero se la classe compare in orma.ignored_exceptions.
+ *
+ * Serve alle applicazioni che usano le eccezioni per controllo di flusso: senza
+ * un filtro, la pagina Errori si riempie di eccezioni del tutto normali e
+ * smette di essere utile. */
+static bool orma_exception_ignored(const zend_string *nome)
+{
+	const char *lista = ORMA_G(ignored_exceptions);
+	if (lista == NULL || *lista == '\0' || nome == NULL) {
+		return false;
+	}
+
+	size_t nome_len = ZSTR_LEN(nome);
+	const char *p = lista;
+
+	while (*p != '\0') {
+		while (*p == ',' || *p == ' ') {
+			p++;
+		}
+		const char *inizio = p;
+		while (*p != '\0' && *p != ',') {
+			p++;
+		}
+		size_t len = (size_t)(p - inizio);
+		while (len > 0 && inizio[len - 1] == ' ') {
+			len--;
+		}
+		if (len == nome_len && strncasecmp(inizio, ZSTR_VAL(nome), len) == 0) {
+			return true;
+		}
+	}
+	return false;
+}
+
 static void orma_throw_hook(zend_object *exception)
 {
-	if (exception != NULL && ORMA_G(txn).active) {
+	if (exception != NULL && ORMA_G(txn).active
+	    && !orma_exception_ignored(exception->ce != NULL ? exception->ce->name : NULL)) {
 		zend_class_entry *ce = exception->ce;
 
 		zval rv;

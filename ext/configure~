@@ -4646,7 +4646,7 @@ printf "%s\n" "#define HAVE_ORMA 1" >>confdefs.h
 
 
   old_IFS=$IFS
-  for ac_src in orma.c orma_txn.c orma_span.c orma_sql.c orma_hooks.c orma_observer.c orma_error.c orma_proto.c orma_sender.c; do
+  for ac_src in orma.c orma_txn.c orma_span.c orma_sql.c orma_hooks.c orma_observer.c orma_error.c orma_api.c orma_proto.c orma_sender.c; do
 
       IFS=.
       set $ac_src
@@ -4698,7 +4698,7 @@ EOF
 
 
   old_IFS=$IFS
-  for ac_src in orma.c orma_txn.c orma_span.c orma_sql.c orma_hooks.c orma_observer.c orma_error.c orma_proto.c orma_sender.c; do
+  for ac_src in orma.c orma_txn.c orma_span.c orma_sql.c orma_hooks.c orma_observer.c orma_error.c orma_api.c orma_proto.c orma_sender.c; do
 
       IFS=.
       set $ac_src
@@ -4781,7 +4781,7 @@ printf "%s\n" "#define COMPILE_DL_ORMA 1" >>confdefs.h
 
 
   old_IFS=$IFS
-  for ac_src in orma.c orma_txn.c orma_span.c orma_sql.c orma_hooks.c orma_observer.c orma_error.c orma_proto.c orma_sender.c; do
+  for ac_src in orma.c orma_txn.c orma_span.c orma_sql.c orma_hooks.c orma_observer.c orma_error.c orma_api.c orma_proto.c orma_sender.c; do
 
       IFS=.
       set $ac_src
@@ -4830,7 +4830,7 @@ EOF
 
 
   old_IFS=$IFS
-  for ac_src in orma.c orma_txn.c orma_span.c orma_sql.c orma_hooks.c orma_observer.c orma_error.c orma_proto.c orma_sender.c; do
+  for ac_src in orma.c orma_txn.c orma_span.c orma_sql.c orma_hooks.c orma_observer.c orma_error.c orma_api.c orma_proto.c orma_sender.c; do
 
       IFS=.
       set $ac_src

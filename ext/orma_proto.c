@@ -331,11 +331,12 @@ bool orma_proto_encode(const orma_txn *txn, orma_buf *out)
 	/* Span: la radice piu' i figli raccolti dagli hook. */
 	if (!orma_put_u32(out, 1 + ORMA_G(span_count))) return false;
 
-	static const uint8_t no_parent[ORMA_SPAN_ID_LEN] = { 0 };
-
+	/* Il genitore della radice e' quello remoto se la richiesta arriva da un
+	 * servizio instrumentato, altrimenti tutto zero. Il daemon riconosce la
+	 * radice dalla posizione, non da questo campo. */
 	if (!orma_buf_append(out, txn->trace_id, ORMA_TRACE_ID_LEN)) return false;
 	if (!orma_buf_append(out, txn->span_id, ORMA_SPAN_ID_LEN)) return false;
-	if (!orma_buf_append(out, no_parent, ORMA_SPAN_ID_LEN)) return false;
+	if (!orma_buf_append(out, txn->parent_span_id, ORMA_SPAN_ID_LEN)) return false;
 	if (!orma_put_u32(out, name_idx)) return false;
 	if (!orma_put_u8(out, txn->background ? ORMA_SPAN_INTERNAL : ORMA_SPAN_SERVER)) return false;
 	if (!orma_put_u64(out, txn->start_unix_nano)) return false;

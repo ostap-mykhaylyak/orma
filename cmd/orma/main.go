@@ -20,6 +20,7 @@ import (
 	"github.com/ostap-mykhaylyak/orma/internal/agg"
 	"github.com/ostap-mykhaylyak/orma/internal/config"
 	"github.com/ostap-mykhaylyak/orma/internal/ingest"
+	"github.com/ostap-mykhaylyak/orma/internal/install"
 	"github.com/ostap-mykhaylyak/orma/internal/pidfile"
 	"github.com/ostap-mykhaylyak/orma/internal/proc"
 	"github.com/ostap-mykhaylyak/orma/internal/protocol"
@@ -39,6 +40,10 @@ Uso:
 
 Opzioni:
   --config <percorso>     configurazione da usare (default: ` + config.DefaultPath + `)
+  --extension <percorso>  estensione da installare con --init (default: orma.so
+                          accanto a questo binario)
+  --php <percorso>        interprete su cui installare l'estensione (default: php)
+  --senza-estensione      con --init, scrive solo la configurazione del daemon
 `
 
 var verbs = map[string]bool{
@@ -53,9 +58,12 @@ func main() {
 }
 
 type options struct {
-	configPath string
-	verb       string
-	action     string
+	configPath      string
+	verb            string
+	action          string
+	extensionPath   string
+	phpBin          string
+	senzaEstensione bool
 }
 
 func run(args []string) error {
@@ -72,7 +80,7 @@ func run(args []string) error {
 		fmt.Printf("orma %s (%s)\n", version.Version, version.Commit)
 		return nil
 	case "init":
-		return doInit(opts.configPath)
+		return doInit(opts)
 	case "check-config":
 		return doCheckConfig(opts.configPath)
 	}
@@ -122,6 +130,26 @@ func parse(args []string) (options, error) {
 				return opts, errors.New("--config richiede un percorso")
 			}
 
+		case arg == "--extension", arg == "--php":
+			if i+1 >= len(args) {
+				return opts, fmt.Errorf("%s richiede un percorso", arg)
+			}
+			i++
+			if arg == "--extension" {
+				opts.extensionPath = args[i]
+			} else {
+				opts.phpBin = args[i]
+			}
+
+		case strings.HasPrefix(arg, "--extension="):
+			opts.extensionPath = strings.TrimPrefix(arg, "--extension=")
+
+		case strings.HasPrefix(arg, "--php="):
+			opts.phpBin = strings.TrimPrefix(arg, "--php=")
+
+		case arg == "--senza-estensione":
+			opts.senzaEstensione = true
+
 		case arg == "--init", arg == "--check-config", arg == "--version", arg == "--help":
 			action := strings.TrimPrefix(arg, "--")
 			if opts.action != "" && opts.action != action {
@@ -153,7 +181,9 @@ func parse(args []string) (options, error) {
 	return opts, nil
 }
 
-func doInit(path string) error {
+func doInit(opts options) error {
+	path := opts.configPath
+
 	if _, err := os.Stat(path); err == nil {
 		return fmt.Errorf("%s esiste gia': rimuovilo se vuoi rigenerarlo", path)
 	} else if !os.IsNotExist(err) {
@@ -174,10 +204,34 @@ func doInit(path string) error {
 		}
 	}
 
-	fmt.Printf("Scritto %s\n", path)
+	fmt.Printf("Scritto  %s\n", path)
 	fmt.Printf("Create   %s, %s\n", filepath.Dir(cfg.Socket), filepath.Dir(cfg.Database))
-	fmt.Print("\nManca l'estensione PHP: copia orma.so in extension_dir e aggiungi a conf.d\n\n")
-	fmt.Printf("  extension=orma.so\n  orma.app_name=nome-del-sito\n  orma.socket=%s\n\n", cfg.Socket)
+
+	if opts.senzaEstensione {
+		fmt.Print("\nEstensione non installata (--senza-estensione).\n")
+		return nil
+	}
+
+	nome, _ := os.Hostname()
+	if nome == "" {
+		nome = "default"
+	}
+
+	esito, err := install.Estensione(opts.phpBin, opts.extensionPath, nome, cfg.Socket)
+	if err != nil {
+		// La configurazione del daemon e' comunque a posto: si dice cosa manca
+		// invece di far sembrare fallito tutto.
+		fmt.Fprintf(os.Stderr, "\nEstensione non installata: %v\n", err)
+		fmt.Fprint(os.Stderr, "Il daemon e' configurato: reinstalla l'estensione con --init dopo aver risolto.\n")
+		return err
+	}
+
+	fmt.Printf("Copiata  %s\n", esito.Destinazione)
+	fmt.Printf("Scritto  %s\n", esito.IniPath)
+	fmt.Printf("\nVerificato: php carica l'estensione.\n")
+	if esito.Nota != "" {
+		fmt.Printf("Passo successivo: %s\n", esito.Nota)
+	}
 	return nil
 }
 
@@ -190,7 +244,13 @@ func doCheckConfig(path string) error {
 		fmt.Printf("%s non esiste: verrebbero usati i default.\n", path)
 	}
 	fmt.Printf("Configurazione valida.\n")
-	fmt.Printf("  socket    %s\n", cfg.Socket)
+	fmt.Printf("  socket    %s", cfg.Socket)
+	if cfg.SocketGroup != "" {
+		fmt.Printf(" (gruppo %s)", cfg.SocketGroup)
+	} else {
+		fmt.Printf(" (aperto a tutti: valuta socket_group)")
+	}
+	fmt.Println()
 	fmt.Printf("  pid_file  %s\n", cfg.PidFile)
 	fmt.Printf("  database  %s\n", cfg.Database)
 	fmt.Printf("  listen    %s\n", cfg.Listen)
@@ -234,7 +294,7 @@ func doStart(cfg config.Config, configPath string) error {
 		manutenzione(ctx, st, cfg.Retention(), log)
 	}()
 
-	ln := ingest.New(cfg.Socket, log, func(txn *protocol.Transaction) {
+	ln := ingest.New(cfg.Socket, cfg.SocketGroup, log, func(txn *protocol.Transaction) {
 		aggregator.Add(txn)
 		log.Debug("transazione",
 			"app", txn.App,

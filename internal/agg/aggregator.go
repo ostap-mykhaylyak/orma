@@ -136,10 +136,13 @@ func (a *Aggregator) Add(txn *protocol.Transaction) {
 	// Scomposizione per categoria e dettaglio di query e host.
 	var dbNS, extNS uint64
 	for i := range txn.Spans {
-		span := &txn.Spans[i]
-		if isRoot(span) {
+		// La radice e' sempre il primo span emesso. Non la si riconosce piu'
+		// dal genitore nullo: con il distributed tracing la radice puo' avere
+		// un genitore remoto.
+		if i == 0 {
 			continue
 		}
+		span := &txn.Spans[i]
 		failed := span.Status != 0
 
 		switch category, value := classify(span); category {
@@ -266,7 +269,10 @@ func buildTrace(txn *protocol.Transaction, app, name, kind string, ts int64) *st
 			DurNS:    span.DurationNano,
 			Status:   span.Status,
 		}
-		if !isRoot(span) {
+		// La radice resta senza genitore nel trace anche quando ne ha uno
+		// remoto: quel genitore vive in un altro servizio e nel waterfall
+		// locale non c'e' nulla a cui appenderla.
+		if i > 0 {
 			ts.Parent = hex.EncodeToString(span.ParentSpanID[:])
 		}
 		if len(span.Attrs) > 0 {
@@ -316,10 +322,6 @@ func addCategory(w *store.Window, key store.Key, durationNS uint64) {
 		b.MaxNS = durationNS
 	}
 	b.Hist.Add(durationNS)
-}
-
-func isRoot(span *protocol.Span) bool {
-	return span.ParentSpanID == [8]byte{}
 }
 
 // classify riconosce la natura di uno span dai suoi attributi, non dal nome:

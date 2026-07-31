@@ -298,6 +298,95 @@ static void orma_cpu_times(uint64_t *user_nano, uint64_t *sys_nano)
 	          + (uint64_t)ru.ru_stime.tv_usec * 1000ULL;
 }
 
+static int orma_hex_val(char c)
+{
+	if (c >= '0' && c <= '9') return c - '0';
+	if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+	if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+	return -1;
+}
+
+static bool orma_hex_decode(const char *s, size_t bytes, uint8_t *out)
+{
+	bool tutti_zero = true;
+
+	for (size_t i = 0; i < bytes; i++) {
+		int alto = orma_hex_val(s[i * 2]);
+		int basso = orma_hex_val(s[i * 2 + 1]);
+		if (alto < 0 || basso < 0) {
+			return false;
+		}
+		out[i] = (uint8_t)((alto << 4) | basso);
+		if (out[i] != 0) {
+			tutti_zero = false;
+		}
+	}
+	/* Un identificativo tutto a zero e' invalido secondo la specifica. */
+	return !tutti_zero;
+}
+
+/* Adotta il contesto di traccia ricevuto, se c'e'.
+ *
+ * Formato W3C: 00-<32 esadecimali>-<16 esadecimali>-<2 esadecimali>.
+ * Si legge dall'ambiente SAPI invece che da $_SERVER, per non forzare la
+ * costruzione dell'autoglobale a ogni richiesta.
+ */
+static void orma_txn_adopt_traceparent(orma_txn *txn)
+{
+	char *header = sapi_getenv("HTTP_TRACEPARENT", sizeof("HTTP_TRACEPARENT") - 1);
+	if (header == NULL) {
+		return;
+	}
+
+	size_t len = strlen(header);
+	uint8_t trace_id[ORMA_TRACE_ID_LEN];
+	uint8_t parent_id[ORMA_SPAN_ID_LEN];
+
+	if (len >= 55
+	    && header[0] == '0' && header[1] == '0'
+	    && header[2] == '-' && header[35] == '-' && header[52] == '-'
+	    && orma_hex_decode(header + 3, ORMA_TRACE_ID_LEN, trace_id)
+	    && orma_hex_decode(header + 36, ORMA_SPAN_ID_LEN, parent_id)) {
+
+		memcpy(txn->trace_id, trace_id, ORMA_TRACE_ID_LEN);
+		memcpy(txn->parent_span_id, parent_id, ORMA_SPAN_ID_LEN);
+		txn->remote_parent = true;
+	}
+
+	efree(header);
+}
+
+size_t orma_txn_traceparent(char *out, size_t out_cap)
+{
+	static const char cifre[] = "0123456789abcdef";
+	const orma_txn *txn = &ORMA_G(txn);
+
+	if (!txn->active || out_cap < 56) {
+		return 0;
+	}
+
+	size_t w = 0;
+	out[w++] = '0';
+	out[w++] = '0';
+	out[w++] = '-';
+	for (int i = 0; i < ORMA_TRACE_ID_LEN; i++) {
+		out[w++] = cifre[txn->trace_id[i] >> 4];
+		out[w++] = cifre[txn->trace_id[i] & 0x0F];
+	}
+	out[w++] = '-';
+	for (int i = 0; i < ORMA_SPAN_ID_LEN; i++) {
+		out[w++] = cifre[txn->span_id[i] >> 4];
+		out[w++] = cifre[txn->span_id[i] & 0x0F];
+	}
+	/* Campionato: orma decide a valle cosa conservare, quindi il chiamante a
+	 * valle non deve scartare in anticipo. */
+	out[w++] = '-';
+	out[w++] = '0';
+	out[w++] = '1';
+	out[w] = '\0';
+	return w;
+}
+
 void orma_txn_begin(void)
 {
 	orma_txn *txn = &ORMA_G(txn);
@@ -306,6 +395,7 @@ void orma_txn_begin(void)
 
 	orma_rng_fill(txn->trace_id, ORMA_TRACE_ID_LEN);
 	orma_rng_fill(txn->span_id, ORMA_SPAN_ID_LEN);
+	orma_txn_adopt_traceparent(txn);
 
 	txn->start_unix_nano = orma_now_unix_nano();
 	txn->start_monotonic_nano = orma_now_monotonic_nano();

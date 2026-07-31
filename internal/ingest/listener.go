@@ -20,7 +20,9 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"os/user"
 	"path/filepath"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -46,6 +48,7 @@ type Handler func(*protocol.Transaction)
 // Listener accetta connessioni dai worker PHP sul socket unix.
 type Listener struct {
 	path    string
+	group   string
 	log     *slog.Logger
 	handler Handler
 	ln      net.Listener
@@ -57,8 +60,10 @@ type Listener struct {
 
 // New prepara un listener sul percorso indicato. handler puo' essere nil, e in
 // quel caso i frame vengono decodificati e scartati.
-func New(path string, log *slog.Logger, handler Handler) *Listener {
-	return &Listener{path: path, log: log, handler: handler}
+// group e' il gruppo unix a cui dare accesso in scrittura, tipicamente quello
+// dei worker php-fpm. Vuoto significa socket aperto a tutti.
+func New(path, group string, log *slog.Logger, handler Handler) *Listener {
+	return &Listener{path: path, group: group, log: log, handler: handler}
 }
 
 // Open crea il socket. Un socket residuo di un'istanza morta viene rimosso, ma
@@ -84,14 +89,50 @@ func (l *Listener) Open() error {
 		return fmt.Errorf("apertura di %s: %w", l.path, err)
 	}
 
-	// I worker php-fpm girano con un altro utente e devono poter scrivere.
-	// M7: restringere a 0660 con un gruppo dedicato invece di aprire a tutti.
-	if err := os.Chmod(l.path, 0o666); err != nil {
+	l.ln = ln
+	if err := l.permessi(); err != nil {
 		ln.Close()
+		os.Remove(l.path)
+		l.ln = nil
+		return err
+	}
+	return nil
+}
+
+// permessi apre il socket in scrittura ai worker php-fpm, che girano con un
+// altro utente.
+//
+// Con un gruppo configurato il socket e' 0660 e solo quel gruppo scrive. Senza,
+// resta 0666: funziona ovunque senza configurazione, ma qualunque utente locale
+// puo' iniettare telemetria falsa. Il compromesso e' esplicito e lo si dice.
+func (l *Listener) permessi() error {
+	if l.group == "" {
+		if err := os.Chmod(l.path, 0o666); err != nil {
+			return fmt.Errorf("permessi del socket: %w", err)
+		}
+		l.log.Warn("socket accessibile a tutti gli utenti locali: "+
+			"imposta socket_group per restringerlo al gruppo di php-fpm",
+			"socket", l.path)
+		return nil
+	}
+
+	gruppo, err := user.LookupGroup(l.group)
+	if err != nil {
+		return fmt.Errorf("gruppo %q non trovato: %w", l.group, err)
+	}
+	gid, err := strconv.Atoi(gruppo.Gid)
+	if err != nil {
+		return fmt.Errorf("gid non valido per il gruppo %q: %w", l.group, err)
+	}
+
+	if err := os.Chown(l.path, -1, gid); err != nil {
+		return fmt.Errorf("assegnazione del socket al gruppo %q: %w", l.group, err)
+	}
+	if err := os.Chmod(l.path, 0o660); err != nil {
 		return fmt.Errorf("permessi del socket: %w", err)
 	}
 
-	l.ln = ln
+	l.log.Info("socket riservato al gruppo", "gruppo", l.group, "socket", l.path)
 	return nil
 }
 

@@ -27,4 +27,9 @@ void orma_txn_record_event(const char *classe, size_t classe_len,
  * alta. Esposta per i test. */
 size_t orma_normalize_path(const char *uri, size_t uri_len, char *out, size_t out_cap);
 
+/* Compone l'header traceparent (W3C Trace Context) della transazione corrente
+ * nel buffer indicato, che deve essere di almeno 56 byte. Restituisce la
+ * lunghezza scritta, 0 se non c'e' una transazione. */
+size_t orma_txn_traceparent(char *out, size_t out_cap);
+
 #endif /* ORMA_TXN_H */

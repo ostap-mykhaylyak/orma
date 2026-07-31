@@ -144,6 +144,10 @@ typedef struct _orma_txn {
 
 	uint8_t  trace_id[ORMA_TRACE_ID_LEN];
 	uint8_t  span_id[ORMA_SPAN_ID_LEN];
+	/* Genitore remoto ricevuto in un header traceparent. Tutto zero se la
+	 * richiesta non arriva da un servizio instrumentato. */
+	uint8_t  parent_span_id[ORMA_SPAN_ID_LEN];
+	bool     remote_parent;
 
 	uint64_t start_unix_nano;
 	uint64_t start_monotonic_nano;
@@ -179,6 +183,7 @@ ZEND_BEGIN_MODULE_GLOBALS(orma)
 	zend_long detail;
 	zend_long function_ms;
 	zend_long max_depth;
+	char     *ignored_exceptions;
 
 	/* Stato di processo: il socket e' per worker, mai ereditato. */
 	int    sock_fd;

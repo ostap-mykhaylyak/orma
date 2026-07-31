@@ -20,6 +20,10 @@ const DefaultPath = "/etc/orma/orma.yaml"
 type Config struct {
 	// Socket e' il socket unix su cui l'estensione consegna i payload.
 	Socket string `yaml:"socket"`
+	// SocketGroup e' il gruppo unix a cui riservare la scrittura sul socket,
+	// tipicamente quello dei worker php-fpm. Vuoto lascia il socket aperto a
+	// tutti gli utenti locali.
+	SocketGroup string `yaml:"socket_group"`
 	// PidFile traccia l'istanza in esecuzione per stop, reload e status.
 	PidFile string `yaml:"pid_file"`
 	// Database e' il file SQLite con metriche, trace, slow SQL ed errori.
@@ -173,6 +177,12 @@ const Template = `# Configurazione di orma.
 # Socket unix su cui l'estensione PHP consegna i payload.
 # Deve coincidere con orma.socket nell'INI dell'estensione.
 #socket: /run/orma/orma.sock
+
+# Gruppo unix a cui riservare la scrittura sul socket: metti qui il gruppo
+# con cui girano i worker php-fpm (di solito www-data). Lasciandolo vuoto il
+# socket resta accessibile a qualunque utente locale, che potrebbe iniettare
+# telemetria falsa.
+#socket_group: www-data
 
 # File che traccia l'istanza in esecuzione.
 #pid_file: /run/orma/orma.pid

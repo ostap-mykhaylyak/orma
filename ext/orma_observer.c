@@ -39,7 +39,6 @@ typedef struct _orma_frame {
 	/* Identificativo che i figli devono usare come genitore: il proprio se
 	 * questo frame e' tracciato, altrimenti quello ereditato. */
 	uint8_t  inherited[ORMA_SPAN_ID_LEN];
-	uint64_t start_unix_nano;
 	uint64_t start_monotonic_nano;
 	bool     tracked;
 } orma_frame;
@@ -131,8 +130,14 @@ static void orma_observer_begin(zend_execute_data *execute_data)
 		return;
 	}
 
-	if (!orma_stack_room()) {
-		/* Non c'e' spazio, ma begin ed end devono restare in pari. */
+	/* Oltre la profondita' massima non si cronometra: invece di scrivere un
+	 * frame che non servira' a nulla, si contano le chiamate saltate. Su una
+	 * ricorsione profonda e' la differenza fra due memcpy per chiamata e un
+	 * incremento. begin ed end restano in pari perche' i frame saltati sono
+	 * sempre piu' profondi di quelli impilati. */
+	if ((ORMA_G(detail) != ORMA_DETAIL_TUTTO
+	     && ORMA_G(depth) >= (uint32_t)ORMA_G(max_depth))
+	    || !orma_stack_room()) {
 		ORMA_G(skipped)++;
 		return;
 	}
@@ -143,23 +148,17 @@ static void orma_observer_begin(zend_execute_data *execute_data)
 	                         : ORMA_G(txn).span_id;
 
 	f->frame = execute_data;
-	f->tracked = (ORMA_G(detail) == ORMA_DETAIL_TUTTO)
-	          || ((uint32_t)ORMA_G(max_depth) > ORMA_G(depth));
+	f->tracked = true;
 
 	memcpy(f->parent_id, inherited, ORMA_SPAN_ID_LEN);
+	orma_rng_fill(f->span_id, ORMA_SPAN_ID_LEN);
+	memcpy(f->inherited, f->span_id, ORMA_SPAN_ID_LEN);
 
-	if (f->tracked) {
-		orma_rng_fill(f->span_id, ORMA_SPAN_ID_LEN);
-		memcpy(f->inherited, f->span_id, ORMA_SPAN_ID_LEN);
-		f->start_unix_nano = orma_now_unix_nano();
-		f->start_monotonic_nano = orma_now_monotonic_nano();
-	} else {
-		/* Non cronometrato: niente orologi, e i figli restano appesi al
-		 * primo antenato tracciato. */
-		memcpy(f->inherited, inherited, ORMA_SPAN_ID_LEN);
-		f->start_unix_nano = 0;
-		f->start_monotonic_nano = 0;
-	}
+	/* Un solo orologio per chiamata. L'istante assoluto di inizio si ricava
+	 * alla fine da quello della transazione piu' lo scarto monotonico: e'
+	 * esattamente lo stesso valore, e costa una syscall in meno su ogni
+	 * chiamata di funzione osservata. */
+	f->start_monotonic_nano = orma_now_monotonic_nano();
 
 	ORMA_G(depth)++;
 }
@@ -208,9 +207,13 @@ static void orma_observer_end(zend_execute_data *execute_data, zval *return_valu
 		return;
 	}
 
+	const orma_txn *txn = &ORMA_G(txn);
+	uint64_t start_unix = txn->start_unix_nano
+	                    + (f->start_monotonic_nano - txn->start_monotonic_nano);
+
 	orma_span_record(name, name_len, ORMA_SPAN_INTERNAL,
 	                 f->span_id, f->parent_id,
-	                 f->start_unix_nano, duration,
+	                 start_unix, duration,
 	                 EG(exception) != NULL ? ORMA_STATUS_ERROR : ORMA_STATUS_OK);
 }
 
@@ -218,7 +221,10 @@ static zend_observer_fcall_handlers orma_observer_init(zend_execute_data *execut
 {
 	zend_observer_fcall_handlers handlers = { NULL, NULL };
 
-	if (ORMA_G(detail) == ORMA_DETAIL_OFF) {
+	/* Con la raccolta disattivata non si registra nulla: altrimenti gli
+	 * handler verrebbero comunque chiamati a ogni funzione solo per uscire
+	 * subito, e orma.enabled=0 costerebbe piu' di orma.detail=0. */
+	if (!ORMA_G(enabled) || ORMA_G(detail) == ORMA_DETAIL_OFF) {
 		return handlers;
 	}
 

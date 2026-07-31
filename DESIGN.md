@@ -118,6 +118,38 @@ tre livelli invece dei due previsti inizialmente:
 | `1` (default) | si cronometra solo entro `orma.max_depth`, e si emette uno span solo sopra `orma.function_ms` |
 | `2` | si emette ogni chiamata, fino al tetto degli span |
 
+### Costo misurato
+
+Il progetto iniziale dichiarava «overhead target < 3%». **Non è raggiunto**, e la stima
+era basata su nulla. Numeri veri, da `test/overhead.sh` su PHP 8.5 in container:
+
+| | sole chiamate di funzione | pagina con molte query |
+|---|---|---|
+| `orma.enabled = 0` | ~0% | ~0% |
+| `detail = 0` | ~0% | **5%** |
+| `detail = 1` | **70–80%** | **10%** |
+| `detail = 2` | 160–180% | 13% |
+
+Il primo carico è deliberatamente il caso peggiore: mezzo milione di chiamate di
+funzione in trenta millisecondi, dove qualunque lavoro per chiamata pesa enormemente. Il
+secondo è la misura che conta per scegliere un default.
+
+Il 5% di `detail = 0` **non** è l'observer, che lì non è nemmeno registrato: è
+l'instrumentazione di PDO, cioè il prezzo di sapere quali query girano.
+
+Tre cose imparate misurando, tutte controintuitive abbastanza da non essere state
+previste:
+
+1. **Registrare un observer costa anche se non si osserva.** `zend_observer_fcall_register`
+   cambia il percorso di chiamata del motore per ogni funzione. Chiamarla in `MINIT`
+   incondizionatamente costava l'8% anche con `orma.enabled = 0`. Ora la registrazione è
+   condizionata.
+2. **Due letture di orologio per chiamata erano una di troppo.** L'istante assoluto di
+   inizio si ricava da quello della transazione più lo scarto monotonico: stesso valore,
+   una syscall in meno. Vale venti punti percentuali sul caso peggiore.
+3. **Un frame non cronometrato non va scritto.** Oltre `max_depth` basta contare le
+   chiamate saltate, invece di riempire una struttura che nessuno leggerà.
+
 **Perché la soglia non produce span orfani:** la durata di un genitore è sempre maggiore
 o uguale a quella di ogni suo discendente. Se un genitore sta sotto soglia, ci stanno
 anche tutti i figli, e nessuno di loro è stato emesso. Gli orfani restano possibili solo

@@ -42,6 +42,10 @@ PHP_INI_BEGIN()
 		function_ms, zend_orma_globals, orma_globals)
 	STD_PHP_INI_ENTRY("orma.max_depth", "5", PHP_INI_SYSTEM, OnUpdateLong,
 		max_depth, zend_orma_globals, orma_globals)
+	/* Classi di eccezione da non registrare, separate da virgola. Per le
+	 * applicazioni che usano le eccezioni come controllo di flusso. */
+	STD_PHP_INI_ENTRY("orma.ignored_exceptions", "", PHP_INI_SYSTEM, OnUpdateString,
+		ignored_exceptions, zend_orma_globals, orma_globals)
 PHP_INI_END()
 
 static PHP_GINIT_FUNCTION(orma)
@@ -74,8 +78,16 @@ PHP_MINIT_FUNCTION(orma)
 	ORMA_G(hostname)[sizeof(ORMA_G(hostname)) - 1] = '\0';
 
 	/* La registrazione dell'observer e' di processo e va fatta prima che
-	 * qualunque op_array venga compilato: qui e' l'unico posto giusto. */
-	orma_observer_register();
+	 * qualunque op_array venga compilato: qui e' l'unico posto giusto.
+	 *
+	 * Va anche evitata del tutto quando non serve: registrare un observer
+	 * cambia il percorso di chiamata del motore per ogni funzione, anche se
+	 * poi decidiamo di non osservarla. Misurato, sono circa otto punti
+	 * percentuali su un carico fatto di sole chiamate. */
+	if (ORMA_G(enabled) && ORMA_G(detail) != ORMA_DETAIL_OFF) {
+		orma_observer_register();
+	}
+
 	orma_error_install();
 
 	return SUCCESS;
@@ -120,19 +132,39 @@ PHP_RSHUTDOWN_FUNCTION(orma)
 
 	/* Uno span ancora aperto significa che la funzione avvolta non e' tornata:
 	 * si chiude in errore prima di misurare la transazione. */
+	/* Qui si misura soltanto. La consegna avviene in post_deactivate, quando
+	 * la richiesta e' gia' stata chiusa: vedi orma_post_deactivate. */
 	orma_spans_close_open();
 	orma_txn_end();
 
+	return SUCCESS;
+}
+
+/* Eseguita dopo lo spegnimento della richiesta, quando l'output e' gia' stato
+ * consegnato e i moduli hanno gia' fatto il loro RSHUTDOWN.
+ *
+ * Onesta' su cosa questo risolve e cosa no: la risposta e' gia' partita verso
+ * il client, quindi il tempo speso qui non allunga la latenza percepita. Non e'
+ * pero' fuori dal ciclo del worker php-fpm, che resta occupato finche' non
+ * abbiamo finito. E' per questo che il budget di ORMA_SEND_TIMEOUT_MS resta
+ * indispensabile: sposta il costo, non lo elimina.
+ */
+static int orma_post_deactivate(void)
+{
+	orma_txn *txn = &ORMA_G(txn);
+
+	if (!txn->active) {
+		return SUCCESS;
+	}
+	txn->active = false;
+
 	if (txn->ignored) {
-		txn->active = false;
 		return SUCCESS;
 	}
 
 	if (orma_proto_encode(txn, &ORMA_G(buf))) {
 		orma_sender_send(ORMA_G(buf).data, ORMA_G(buf).len);
 	}
-
-	txn->active = false;
 	return SUCCESS;
 }
 
@@ -168,7 +200,7 @@ zend_module_entry orma_module_entry = {
 	PHP_MODULE_GLOBALS(orma),
 	PHP_GINIT(orma),
 	PHP_GSHUTDOWN(orma),
-	NULL,                      /* post deactivate */
+	orma_post_deactivate,
 	STANDARD_MODULE_PROPERTIES_EX
 };
 
