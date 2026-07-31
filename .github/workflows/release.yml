@@ -60,6 +60,55 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+      - name: Checksum
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Note di rilascio
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          cat > /tmp/note.md <<NOTE
+          APM per PHP self-hosted, indipendente dal framework: si aggancia al motore
+          Zend e dice dove se ne va il tempo di una richiesta.
+
+          **Richiede PHP 8.5 su Ubuntu 26.04**, amd64 o arm64. Una sola ABI, quindi
+          due artefatti invece di sedici.
+
+          ## Installazione
+
+          \`\`\`bash
+          sudo install -m 0755 orma-${version}-linux-amd64 /usr/local/bin/orma
+          cp orma-${version}-php8.5-nts-amd64.so ./orma.so
+          sudo orma --init
+          sudo phpenmod orma && sudo systemctl restart php8.5-fpm
+          sudo orma start
+          \`\`\`
+
+          \`--init\` installa l'estensione, **verifica che PHP la carichi davvero** e
+          genera il token di accesso al pannello. Se l'artefatto non corrisponde alla
+          build di PHP presente, viene rimosso e te lo dice.
+
+          ## Cosa costa
+
+          Su WordPress vero, misurato con giro di controllo a estensione spenta:
+          **fra il 4% e il 9% di throughput**, nessuna crescita di memoria dei worker
+          su 3000 richieste senza riciclo.
+
+          ## Stato
+
+          Prima release. Funziona ed è provata su WordPress con php-fpm, sotto
+          AddressSanitizer e con 4000 casi di SQL malformato contro l'offuscatore.
+          Restano fuori \`curl_multi_exec\`, gli artefatti ZTS e il supporto a versioni
+          di PHP diverse dalla 8.5.
+          NOTE
+          echo "note pronte"
+
       - env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${GITHUB_REF_NAME}" dist/* --generate-notes
+        run: |
+          gh release create "${GITHUB_REF_NAME}" dist/* \
+            --title "orma ${GITHUB_REF_NAME}" \
+            --notes-file /tmp/note.md \
+            --generate-notes
