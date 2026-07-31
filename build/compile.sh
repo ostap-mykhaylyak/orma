@@ -1,13 +1,15 @@
 #!/bin/sh
-# Compila l'estensione dentro il container. Il log completo finisce in
-# dist/build.log; a schermo restano solo diagnostica e esito.
+# Compila l'estensione dentro il container. A schermo restano solo diagnostica
+# ed esito; il log completo resta nel container.
+#
+# Il log non va dentro al repository montato: lo creerebbe come root, e in CI
+# il passo successivo non potrebbe piu' scrivere nella stessa directory.
 #
 # Uso: sh /src/build/compile.sh [clean]
 set -e
 
 cd /src/ext
-mkdir -p /src/dist
-log=/src/dist/build.log
+log=/tmp/orma-build.log
 
 if [ "$1" = "clean" ]; then
 	make distclean >/dev/null 2>&1 || true
