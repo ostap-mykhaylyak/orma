@@ -28,10 +28,8 @@ jobs:
 
       - name: Estensione
         run: |
+          docker run --rm -v "$PWD":/src orma-build sh /src/build/compile.sh
           docker run --rm -v "$PWD":/src -w /src/ext orma-build sh -c '
-            phpize &&
-            ./configure --enable-orma &&
-            make -j"$(nproc)" &&
             NO_INTERACTION=1 REPORT_EXIT_STATUS=1 make test
           '
 

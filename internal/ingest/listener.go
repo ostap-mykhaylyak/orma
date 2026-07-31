@@ -23,11 +23,13 @@ import (
 	"path/filepath"
 	"sync/atomic"
 	"time"
+
+	"github.com/ostap-mykhaylyak/orma/internal/protocol"
 )
 
 const (
 	// ProtocolVersion e' la versione del protocollo agent to daemon.
-	ProtocolVersion = 1
+	ProtocolVersion = protocol.Version
 
 	// MaxFrameSize limita quanto un singolo frame puo' far allocare al daemon.
 	// Un client che mente sulla lunghezza non deve poter esaurire la memoria.
@@ -36,20 +38,27 @@ const (
 	headerSize = 2 // version + flags
 )
 
+// Handler riceve ogni transazione decodificata. Viene invocato dalla goroutine
+// della connessione, quindi deve essere veloce e non bloccare: se ha lavoro da
+// fare, lo accodi.
+type Handler func(*protocol.Transaction)
+
 // Listener accetta connessioni dai worker PHP sul socket unix.
 type Listener struct {
-	path string
-	log  *slog.Logger
-	ln   net.Listener
+	path    string
+	log     *slog.Logger
+	handler Handler
+	ln      net.Listener
 
 	frames   atomic.Uint64
 	bytes    atomic.Uint64
 	rejected atomic.Uint64
 }
 
-// New prepara un listener sul percorso indicato.
-func New(path string, log *slog.Logger) *Listener {
-	return &Listener{path: path, log: log}
+// New prepara un listener sul percorso indicato. handler puo' essere nil, e in
+// quel caso i frame vengono decodificati e scartati.
+func New(path string, log *slog.Logger, handler Handler) *Listener {
+	return &Listener{path: path, log: log, handler: handler}
 }
 
 // Open crea il socket. Un socket residuo di un'istanza morta viene rimosso, ma
@@ -155,16 +164,24 @@ func (l *Listener) handle(conn net.Conn) {
 			return
 		}
 
-		if frame[0] != ProtocolVersion {
+		txn, err := protocol.Decode(frame)
+		if err != nil {
+			// Un frame malformato desincronizza lo stream: non si puo'
+			// riprendere a leggere da meta' payload, si chiude e basta.
 			l.rejected.Add(1)
-			l.log.Warn("versione di protocollo non supportata, connessione chiusa",
-				"ricevuta", frame[0], "attesa", ProtocolVersion)
+			if errors.Is(err, protocol.ErrVersion) {
+				l.log.Warn("versione di protocollo non supportata, connessione chiusa", "errore", err)
+			} else {
+				l.log.Warn("frame malformato, connessione chiusa", "errore", err)
+			}
 			return
 		}
 
 		l.frames.Add(1)
 		l.bytes.Add(uint64(frameLen) + 4)
 
-		// M1: qui va il decoder. Per ora il payload viene scartato.
+		if l.handler != nil {
+			l.handler(txn)
+		}
 	}
 }

@@ -21,12 +21,12 @@ jobs:
       - name: Immagine di build
         run: docker build -t orma-build build
 
-      - name: Compila e testa
+      - name: Compila
+        run: docker run --rm -v "$PWD":/src orma-build sh /src/build/compile.sh
+
+      - name: Testa
         run: |
           docker run --rm -v "$PWD":/src -w /src/ext orma-build sh -c '
-            phpize &&
-            ./configure --enable-orma &&
-            make -j"$(nproc)" &&
             NO_INTERACTION=1 REPORT_EXIT_STATUS=1 make test
           '
 

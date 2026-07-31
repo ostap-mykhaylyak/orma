@@ -22,7 +22,7 @@ image:
 	docker build -t $(IMAGE) build
 
 ext: image
-	$(DOCKER_RUN) 'phpize && ./configure --enable-orma && make -j"$$(nproc)"'
+	docker run --rm -v "$(CURDIR)":/src $(IMAGE) sh /src/build/compile.sh
 
 ext-test: ext
 	$(DOCKER_RUN) 'NO_INTERACTION=1 REPORT_EXIT_STATUS=1 make test'

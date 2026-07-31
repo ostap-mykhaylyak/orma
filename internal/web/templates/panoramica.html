@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>orma — Panoramica</title>
+<style>
+  :root {
+    --bg: #fbfbfa; --fg: #1c1b19; --muted: #6b6a67;
+    --line: #e3e2df; --card: #fff; --accent: #b8541f; --err: #b3261e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161513; --fg: #eceae6; --muted: #9a978f;
+      --line: #2e2c29; --card: #1e1d1b; --accent: #e08a4e; --err: #f2b8b5;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
+  header { display: flex; align-items: baseline; gap: .75rem; flex-wrap: wrap; margin-bottom: .25rem; }
+  h1 { font-size: 1.35rem; margin: 0; letter-spacing: -.01em; }
+  .sub { color: var(--muted); font-size: .85rem; }
+  nav { margin: 1.25rem 0 1.75rem; display: flex; gap: .5rem; flex-wrap: wrap; }
+  nav a {
+    padding: .3rem .7rem; border: 1px solid var(--line); border-radius: 999px;
+    color: var(--muted); text-decoration: none; font-size: .85rem;
+  }
+  nav a.on { border-color: var(--accent); color: var(--accent); }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: .75rem; }
+  .tile { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: .9rem 1rem; }
+  .tile .k { color: var(--muted); font-size: .75rem; text-transform: uppercase; letter-spacing: .06em; }
+  .tile .v { font-size: 1.5rem; margin-top: .3rem; font-variant-numeric: tabular-nums; }
+  .tile .v.err { color: var(--err); }
+  h2 { font-size: 1rem; margin: 2.25rem 0 .75rem; font-weight: 600; }
+  .scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--card); }
+  table { border-collapse: collapse; width: 100%; font-size: .875rem; }
+  th, td { padding: .55rem .8rem; text-align: right; white-space: nowrap; }
+  th { color: var(--muted); font-weight: 500; font-size: .75rem; text-transform: uppercase; letter-spacing: .05em; }
+  th:first-child, td:first-child { text-align: left; white-space: normal; }
+  tbody tr { border-top: 1px solid var(--line); }
+  td.name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .82rem; }
+  .tag { font-size: .7rem; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 0 .35rem; margin-left: .4rem; }
+  td.n { font-variant-numeric: tabular-nums; }
+  .empty { padding: 2.5rem 1rem; text-align: center; color: var(--muted); }
+  footer { margin-top: 2.5rem; color: var(--muted); font-size: .78rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1>orma</h1>
+    <span class="sub">Panoramica &middot; ultimi {{ .Minuti }} minuti &middot; aggiornato alle {{ .Generato }}</span>
+  </header>
+
+  <nav>
+    <a href="?minuti=30"  {{ if eq .Minuti 30 }}class="on"{{ end }}>30 min</a>
+    <a href="?minuti=60"  {{ if eq .Minuti 60 }}class="on"{{ end }}>1 ora</a>
+    <a href="?minuti=360" {{ if eq .Minuti 360 }}class="on"{{ end }}>6 ore</a>
+    <a href="?minuti=1440"{{ if eq .Minuti 1440 }}class="on"{{ end }}>24 ore</a>
+  </nav>
+
+  <div class="tiles">
+    <div class="tile"><div class="k">Richieste</div><div class="v">{{ num .Summary.Requests }}</div></div>
+    <div class="tile"><div class="k">Throughput</div><div class="v">{{ rate .Summary.ThroughputPerMin }}</div></div>
+    <div class="tile"><div class="k">Media</div><div class="v">{{ ms .Summary.AvgMS }}</div></div>
+    <div class="tile"><div class="k">p95</div><div class="v">{{ ms .Summary.P95MS }}</div></div>
+    <div class="tile"><div class="k">p99</div><div class="v">{{ ms .Summary.P99MS }}</div></div>
+    <div class="tile">
+      <div class="k">Errori</div>
+      <div class="v {{ if gt .Summary.Errors 0 }}err{{ end }}">{{ perc .Summary.ErrorRate }}</div>
+    </div>
+  </div>
+
+  <h2>Transazioni per tempo consumato</h2>
+  <div class="scroll">
+    {{ if .Txns }}
+    <table>
+      <thead>
+        <tr>
+          <th>Transazione</th><th>Richieste</th><th>Tempo totale</th>
+          <th>Media</th><th>p95</th><th>Massimo</th><th>Errori</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{ range .Txns }}
+        <tr>
+          <td class="name">{{ .Name }}<span class="tag">{{ .Category }}</span></td>
+          <td class="n">{{ num .Count }}</td>
+          <td class="n">{{ seconds .TotalMS }}</td>
+          <td class="n">{{ ms .AvgMS }}</td>
+          <td class="n">{{ ms .P95MS }}</td>
+          <td class="n">{{ ms .MaxMS }}</td>
+          <td class="n">{{ num .Errors }}</td>
+        </tr>
+        {{ end }}
+      </tbody>
+    </table>
+    {{ else }}
+    <div class="empty">
+      Nessuna transazione in questo intervallo.<br>
+      Le metriche compaiono al primo minuto chiuso dopo la prima richiesta.
+    </div>
+    {{ end }}
+  </div>
+
+  <footer>orma {{ .Version }} &middot; ordinamento per tempo totale consumato, non per durata media</footer>
+
+</div>
+</body>
+</html>

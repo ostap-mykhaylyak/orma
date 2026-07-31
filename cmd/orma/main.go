@@ -17,11 +17,15 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ostap-mykhaylyak/orma/internal/agg"
 	"github.com/ostap-mykhaylyak/orma/internal/config"
 	"github.com/ostap-mykhaylyak/orma/internal/ingest"
 	"github.com/ostap-mykhaylyak/orma/internal/pidfile"
 	"github.com/ostap-mykhaylyak/orma/internal/proc"
+	"github.com/ostap-mykhaylyak/orma/internal/protocol"
+	"github.com/ostap-mykhaylyak/orma/internal/store"
 	"github.com/ostap-mykhaylyak/orma/internal/version"
+	"github.com/ostap-mykhaylyak/orma/internal/web"
 )
 
 const usage = `orma — APM per PHP
@@ -203,23 +207,68 @@ func doStart(cfg config.Config, configPath string) error {
 	}
 	defer pf.Release()
 
-	ln := ingest.New(cfg.Socket, log)
+	st, err := store.Open(cfg.Database)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	aggregator := agg.New(st, log, 0)
+	aggDone := make(chan struct{})
+	go func() {
+		defer close(aggDone)
+		aggregator.Run(ctx)
+	}()
+
+	ln := ingest.New(cfg.Socket, log, func(txn *protocol.Transaction) {
+		aggregator.Add(txn)
+		log.Debug("transazione",
+			"app", txn.App,
+			"nome", txn.Name,
+			"durata_ms", float64(txn.DurationNano)/1e6,
+			"stato", txn.HTTPStatus,
+			"memoria", txn.PeakMemory,
+			"background", txn.Background,
+			"span", len(txn.Spans))
+	})
 	if err := ln.Open(); err != nil {
 		return err
 	}
 	defer ln.Close()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	srv, err := web.New(cfg.Listen, st, log)
+	if err != nil {
+		return err
+	}
 
 	served := make(chan error, 1)
 	go func() { served <- ln.Serve(ctx) }()
+
+	webErr := make(chan error, 1)
+	go func() { webErr <- srv.Serve(ctx) }()
 
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
 
 	log.Info("orma avviato",
-		"versione", version.Version, "pid", os.Getpid(), "socket", cfg.Socket)
+		"versione", version.Version, "pid", os.Getpid(),
+		"socket", cfg.Socket, "ui", cfg.Listen, "database", cfg.Database)
+
+	// stop riversa le metriche ancora in memoria prima che il database venga
+	// chiuso dal defer: l'ultimo minuto non si perde.
+	stop := func(cause error) error {
+		cancel()
+		frames, bytes, rejected := ln.Stats()
+		log.Info("ingestione", "frame", frames, "byte", bytes, "scartati", rejected)
+		<-aggDone
+		if cause != nil {
+			return cause
+		}
+		return <-served
+	}
 
 	for {
 		select {
@@ -229,20 +278,23 @@ func doStart(cfg config.Config, configPath string) error {
 					log.Error("ricarica fallita, resto sulla configurazione precedente", "errore", err)
 					continue
 				}
-				// M1+: applicare a caldo cio' che si puo'. Socket e pid_file no:
-				// quelli richiedono un riavvio, e va detto invece di fingere.
+				// M2+: applicare a caldo cio' che si puo'. Socket, pid_file e
+				// database no: quelli richiedono un riavvio, e va detto invece
+				// di fingere.
 				log.Info("configurazione ricaricata")
 				continue
 			}
 
 			log.Info("arresto in corso", "segnale", sig.String())
-			cancel()
-			frames, bytes, rejected := ln.Stats()
-			log.Info("ingestione", "frame", frames, "byte", bytes, "scartati", rejected)
-			return <-served
+			return stop(nil)
 
 		case err := <-served:
-			return err
+			return stop(err)
+
+		case err := <-webErr:
+			if err != nil {
+				return stop(fmt.Errorf("interfaccia web: %w", err))
+			}
 		}
 	}
 }
