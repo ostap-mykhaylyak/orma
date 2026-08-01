@@ -86,9 +86,32 @@ jobs:
           sudo orma start
           \`\`\`
 
-          \`--init\` installa l'estensione, **verifica che PHP la carichi davvero** e
-          genera il token di accesso al pannello. Se l'artefatto non corrisponde alla
-          build di PHP presente, viene rimosso e te lo dice.
+          \`--init\` installa l'estensione, **verifica che PHP la carichi davvero**,
+          installa il servizio systemd e genera il token di accesso al pannello. Se
+          l'artefatto non corrisponde alla build di PHP presente, viene rimosso e te lo
+          dice.
+
+          ## Aggiornamento da una versione precedente
+
+          **Estensione e daemon vanno sostituiti insieme.** Il protocollo fra i due ha
+          una versione: un daemon nuovo rifiuta i frame di un'estensione vecchia con un
+          messaggio chiaro invece di interpretarli male, ma nel frattempo non raccoglie
+          nulla.
+
+          \`\`\`bash
+          sudo systemctl stop orma
+          sudo install -m 0755 orma-${version}-linux-amd64 /usr/local/bin/orma
+          cp orma-${version}-php8.5-nts-amd64.so ./orma.so
+          sudo orma --init --extension ./orma.so   # se la configurazione esiste gia', vedi sotto
+          sudo systemctl restart php8.5-fpm
+          sudo systemctl start orma
+          \`\`\`
+
+          Se \`/etc/orma/orma.yaml\` esiste già, \`--init\` si rifiuta di sovrascriverlo:
+          copia a mano il nuovo \`.so\` nella \`extension_dir\` e sostituisci il binario.
+          Le tabelle delle metriche vengono ricreate da sole quando lo schema cambia, e
+          il daemon lo scrive nel log: **i dati storici si perdono**, quelli di
+          telemetria sono rimpiazzabili.
 
           ## Cosa costa
 
@@ -98,10 +121,13 @@ jobs:
 
           ## Stato
 
-          Prima release. Funziona ed è provata su WordPress con php-fpm, sotto
-          AddressSanitizer e con 4000 casi di SQL malformato contro l'offuscatore.
-          Restano fuori \`curl_multi_exec\`, gli artefatti ZTS e il supporto a versioni
-          di PHP diverse dalla 8.5.
+          Provata su WordPress con php-fpm, sotto AddressSanitizer e
+          UndefinedBehaviorSanitizer, e con 4000 casi di SQL malformato contro
+          l'offuscatore. L'unit systemd è verificata con systemd come PID 1.
+
+          Restano fuori \`curl_multi_exec\` come span, gli artefatti ZTS e il supporto a
+          versioni di PHP diverse dalla 8.5. Il daemon gira come root: un utente
+          dedicato è il passo successivo.
           NOTE
           echo "note pronte"
 
