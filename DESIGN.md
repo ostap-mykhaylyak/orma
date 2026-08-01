@@ -379,6 +379,33 @@ del browser. Il confronto è a tempo costante.
 `/salute` resta fuori dall'autenticazione: serve a un supervisore per sapere se il
 processo risponde, e non espone dati raccolti.
 
+### Perché è lento, non solo dove
+
+Il waterfall mostra l'annidamento, e da solo non basta. Un metodo che dura cinque secondi
+con sotto un figlio che ne dura cinque lascia esattamente dove si era. Tre aggiunte, in
+ordine di costo crescente:
+
+**Il tempo proprio** — durata meno quella dei figli registrati. Si calcola nel daemon
+dall'albero che già esiste, quindi costa zero all'agent. Le righe con tempo proprio alto
+in proporzione sono marcate: il rallentamento è lì e non più in basso.
+
+**Il conteggio delle chiamate per span** — quante funzioni utente sono state eseguite
+dentro, comprese quelle rimaste sotto soglia. Si ottiene in tempo costante con un
+contatore globale e uno scarto per frame, senza risalire la pila. Distingue *lento perché
+fa moltissimo* da *lento perché aspetta*: due diagnosi opposte che senza questo numero
+hanno lo stesso aspetto.
+
+**Il profilo delle funzioni interne** — quante volte e per quanto tempo sono state
+chiamate le funzioni che possono davvero costare: `preg_*`, `json_*`, serializzazione,
+filesystem, compressione, hash, immagini, attese. L'elenco è curato a mano ed esclude le
+funzioni banali chiamate a milioni, dove cronometrare costerebbe più che eseguire.
+
+Non produce span — sarebbero migliaia — ma un totale per funzione, che è la forma in cui
+l'informazione si legge. Su una homepage WordPress: 162 `file_exists`, 140 `json_decode`
+e 1409 `preg_match` per richiesta. Costa due letture di orologio per chiamata delle sole
+funzioni in elenco; misurato su WordPress, l'overhead resta dentro l'intervallo già
+osservato senza profilo.
+
 ### Auto-osservazione
 
 Un APM che non sa dire se sta perdendo dati **mente per omissione**: se il socket satura
@@ -394,6 +421,13 @@ e non deve inseguire pid che si riciclano.
 La pagina Stato mostra quel numero insieme ai frame rifiutati e alle finestre perse in
 scrittura, e dichiara la raccolta «con perdite» invece di «completa» appena uno dei tre
 è diverso da zero.
+
+**Le perdite sono distinte per causa**, perché hanno rimedi diversi: connessione fallita
+significa daemon fermo o permessi sbagliati sul socket; timeout significa macchina carica
+o budget troppo stretto, e allora si alza `orma.send_timeout_ms`; errore di scrittura
+significa socket caduto sotto l'agent, tipicamente un riavvio del daemon. La pagina
+traduce la causa prevalente in una frase operativa: un contatore che sale senza dire cosa
+farci è un contatore che si impara a ignorare.
 
 ### Allarmi
 

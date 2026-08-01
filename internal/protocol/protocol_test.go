@@ -26,6 +26,7 @@ func validFrame() []byte {
 	strs := []string{
 		"", "prova", "srv1", "/prodotti/{id}", "http.request.method", "GET",
 		"php.memory.peak_bytes", "E_WARNING", "Undefined variable $x", "/var/www/indice.php",
+		"preg_replace",
 	}
 	f.u32(uint32(len(strs)))
 	for _, s := range strs {
@@ -47,7 +48,10 @@ func validFrame() []byte {
 	f.u32(0) // errori
 	f.u32(0) // warning
 	f.u32(0) // span scartati
-	f.u32(0) // frame persi dall'agent
+	f.u32(1) // persi: connessione
+	f.u32(2) // persi: timeout
+	f.u32(0) // persi: scrittura
+	f.u64(4200) // chiamate di funzione
 
 	f.u32(1) // uno span
 	f.raw(16)
@@ -58,6 +62,7 @@ func validFrame() []byte {
 	f.u64(1700000000000000000)
 	f.u64(1500000)
 	f.u8(0)
+	f.u32(4200) // chiamate dentro lo span
 	f.u16(2)
 	f.u32(4)
 	f.u8(uint8(AttrString))
@@ -74,6 +79,12 @@ func validFrame() []byte {
 	f.u32(42)
 	f.u8(uint8(SeveritaErrore))
 	f.u64(1700000000000000000)
+
+	// Una voce di profilo.
+	f.u32(1)
+	f.u32(10) // "preg_replace"
+	f.u32(3120)
+	f.u64(2_500_000_000)
 
 	return f.b
 }
@@ -112,6 +123,20 @@ func TestDecodeValido(t *testing.T) {
 	ev := txn.Events[0]
 	if ev.Class != "E_WARNING" || ev.Line != 42 || ev.Severity != SeveritaErrore {
 		t.Errorf("evento errato: %+v", ev)
+	}
+
+	if txn.Perse.Connessione != 1 || txn.Perse.Timeout != 2 || txn.Perse.Totale() != 3 {
+		t.Errorf("perse errate: %+v", txn.Perse)
+	}
+	if txn.Chiamate != 4200 || span.Chiamate != 4200 {
+		t.Errorf("chiamate errate: transazione %d, span %d", txn.Chiamate, span.Chiamate)
+	}
+
+	if len(txn.Profilo) != 1 {
+		t.Fatalf("attesa 1 voce di profilo, trovate %d", len(txn.Profilo))
+	}
+	if p := txn.Profilo[0]; p.Funzione != "preg_replace" || p.Chiamate != 3120 || p.Nano != 2_500_000_000 {
+		t.Errorf("voce di profilo errata: %+v", p)
 	}
 }
 

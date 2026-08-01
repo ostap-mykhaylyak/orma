@@ -10,7 +10,9 @@ void orma_sender_send(const char *data, size_t len);
 
 void orma_sender_close(void);
 
-/* Contabilizza un frame perso. Il conteggio viaggia nel frame successivo. */
-void orma_sender_drop(void);
+/* Contabilizza un frame perso, con la causa. Il conteggio viaggia nel frame
+ * successivo, distinto per causa: connessione, timeout e scrittura hanno
+ * rimedi diversi. */
+void orma_sender_drop(int causa);
 
 #endif /* ORMA_SENDER_H */

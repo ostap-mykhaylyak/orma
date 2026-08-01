@@ -191,6 +191,38 @@ static bool orma_emit_custom(orma_buf *out, orma_strtab *tab, const orma_txn *tx
 	return true;
 }
 
+/* Interna i nomi delle funzioni profilate che sono state davvero chiamate. */
+static void orma_intern_profilo(orma_strtab *tab, const orma_txn *txn)
+{
+	for (int i = 0; i < ORMA_PROF_TOTALE; i++) {
+		if (txn->profilo[i].chiamate > 0) {
+			orma_intern_cstr(tab, orma_profilo_nome(i));
+		}
+	}
+}
+
+static bool orma_emit_profilo(orma_buf *out, orma_strtab *tab, const orma_txn *txn)
+{
+	uint32_t voci = 0;
+	for (int i = 0; i < ORMA_PROF_TOTALE; i++) {
+		if (txn->profilo[i].chiamate > 0) {
+			voci++;
+		}
+	}
+
+	if (!orma_put_u32(out, voci)) return false;
+
+	for (int i = 0; i < ORMA_PROF_TOTALE; i++) {
+		if (txn->profilo[i].chiamate == 0) {
+			continue;
+		}
+		if (!orma_put_u32(out, orma_intern_cstr(tab, orma_profilo_nome(i)))) return false;
+		if (!orma_put_u32(out, txn->profilo[i].chiamate)) return false;
+		if (!orma_put_u64(out, txn->profilo[i].nanosecondi)) return false;
+	}
+	return true;
+}
+
 /* Interna le stringhe degli eventi di errore. */
 static void orma_intern_events(orma_strtab *tab, const orma_txn *txn)
 {
@@ -251,6 +283,7 @@ static bool orma_emit_children(orma_buf *out, orma_strtab *tab, const orma_txn *
 		if (!orma_put_u64(out, span->start_unix_nano)) return false;
 		if (!orma_put_u64(out, span->duration_nano)) return false;
 		if (!orma_put_u8(out, span->status)) return false;
+		if (!orma_put_u32(out, span->chiamate)) return false;
 		if (!orma_put_u16(out, span->attr_count)) return false;
 
 		for (uint8_t a = 0; a < span->attr_count; a++) {
@@ -292,6 +325,7 @@ bool orma_proto_encode(const orma_txn *txn, orma_buf *out)
 	orma_intern_children(&tab);
 	orma_intern_events(&tab, txn);
 	orma_intern_custom(&tab, txn);
+	orma_intern_profilo(&tab, txn);
 
 	orma_buf_reset(out);
 
@@ -328,8 +362,12 @@ bool orma_proto_encode(const orma_txn *txn, orma_buf *out)
 	if (!orma_put_u32(out, txn->warnings)) return false;
 	if (!orma_put_u32(out, txn->spans_dropped)) return false;
 	/* Quante transazioni non sono arrivate al daemon dall'ultima consegna
-	 * riuscita: senza questo campo il daemon non puo' sapere di essere cieco. */
-	if (!orma_put_u32(out, (uint32_t)ORMA_G(dropped_frames))) return false;
+	 * riuscita, e perche': senza questi campi il daemon non puo' sapere di
+	 * essere cieco, e sapendolo non saprebbe cosa farci. */
+	for (int i = 0; i < ORMA_DROP_CAUSE; i++) {
+		if (!orma_put_u32(out, ORMA_G(dropped)[i])) return false;
+	}
+	if (!orma_put_u64(out, txn->chiamate)) return false;
 
 	/* Span: la radice piu' i figli raccolti dagli hook. */
 	if (!orma_put_u32(out, 1 + ORMA_G(span_count))) return false;
@@ -345,6 +383,7 @@ bool orma_proto_encode(const orma_txn *txn, orma_buf *out)
 	if (!orma_put_u64(out, txn->start_unix_nano)) return false;
 	if (!orma_put_u64(out, txn->duration_nano)) return false;
 	if (!orma_put_u8(out, txn->errors > 0 ? ORMA_STATUS_ERROR : ORMA_STATUS_OK)) return false;
+	if (!orma_put_u32(out, txn->chiamate > UINT32_MAX ? UINT32_MAX : (uint32_t)txn->chiamate)) return false;
 
 	uint16_t attr_count = (txn->background ? 1 : 2) + (uint16_t)txn->custom_count;
 	if (!orma_put_u16(out, attr_count)) return false;
@@ -362,6 +401,7 @@ bool orma_proto_encode(const orma_txn *txn, orma_buf *out)
 	if (!orma_emit_custom(out, &tab, txn)) return false;
 	if (!orma_emit_children(out, &tab, txn)) return false;
 	if (!orma_emit_events(out, &tab, txn)) return false;
+	if (!orma_emit_profilo(out, &tab, txn)) return false;
 
 	/* Patch della lunghezza: byte che seguono il campo stesso. */
 	uint32_t frame_len = (uint32_t)(out->len - 4);

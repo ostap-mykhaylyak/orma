@@ -191,6 +191,7 @@ func (s *Store) Purge(r Retention, log *slog.Logger) error {
 		{"errors", "bucket_ts", r.Errori},
 		{"slow_sql", "bucket_ts", r.QuerySQ},
 		{"externals", "bucket_ts", r.QuerySQ},
+		{"profilo", "bucket_ts", r.QuerySQ},
 	}
 
 	var totale int64

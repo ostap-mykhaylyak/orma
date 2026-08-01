@@ -29,6 +29,14 @@
 #include <sys/un.h>
 #include <unistd.h>
 
+/* Budget di consegna, in millisecondi. Sotto 1 non ha senso: il valore serve
+ * anche come timeout di poll, e zero significherebbe non aspettare affatto. */
+static long orma_budget_ms(void)
+{
+	long budget = (long)ORMA_G(send_timeout_ms);
+	return budget < 1 ? 1 : budget;
+}
+
 void orma_sender_close(void)
 {
 	int fd = ORMA_G(sock_fd);
@@ -67,7 +75,7 @@ static int orma_sender_open(void)
 			return -1;
 		}
 		struct pollfd p = { .fd = fd, .events = POLLOUT, .revents = 0 };
-		if (poll(&p, 1, ORMA_SEND_TIMEOUT_MS) <= 0 || !(p.revents & POLLOUT)) {
+		if (poll(&p, 1, (int)orma_budget_ms()) <= 0 || !(p.revents & POLLOUT)) {
 			close(fd);
 			return -1;
 		}
@@ -84,10 +92,16 @@ static int orma_sender_open(void)
 	return fd;
 }
 
-static bool orma_write_all(int fd, const char *data, size_t len)
+typedef enum {
+	ORMA_SCRITTURA_OK,
+	ORMA_SCRITTURA_TIMEOUT,
+	ORMA_SCRITTURA_ERRORE
+} orma_esito_scrittura;
+
+static orma_esito_scrittura orma_write_all(int fd, const char *data, size_t len)
 {
 	uint64_t deadline = orma_now_monotonic_nano()
-	                  + (uint64_t)ORMA_SEND_TIMEOUT_MS * 1000000ULL;
+	                  + (uint64_t)orma_budget_ms() * 1000000ULL;
 	size_t off = 0;
 
 	while (off < len) {
@@ -102,18 +116,18 @@ static bool orma_write_all(int fd, const char *data, size_t len)
 		if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
 			uint64_t now = orma_now_monotonic_nano();
 			if (now >= deadline) {
-				return false;
+				return ORMA_SCRITTURA_TIMEOUT;
 			}
 			int remaining_ms = (int)((deadline - now) / 1000000ULL);
 			struct pollfd p = { .fd = fd, .events = POLLOUT, .revents = 0 };
 			if (poll(&p, 1, remaining_ms > 0 ? remaining_ms : 1) <= 0) {
-				return false;
+				return ORMA_SCRITTURA_TIMEOUT;
 			}
 			continue;
 		}
-		return false;
+		return ORMA_SCRITTURA_ERRORE;
 	}
-	return true;
+	return ORMA_SCRITTURA_OK;
 }
 
 void orma_sender_send(const char *data, size_t len)
@@ -130,34 +144,49 @@ void orma_sender_send(const char *data, size_t len)
 
 	/* Un tentativo, piu' un solo ritentativo dopo riconnessione: il daemon
 	 * puo' essere stato riavviato sotto di noi, ma non vale la pena insistere. */
+	orma_esito_scrittura ultimo = ORMA_SCRITTURA_ERRORE;
+
 	for (int attempt = 0; attempt < 2; attempt++) {
 		int fd = ORMA_G(sock_fd);
 		if (fd < 0) {
 			fd = orma_sender_open();
 			if (fd < 0) {
-				orma_sender_drop();
+				orma_sender_drop(ORMA_DROP_CONNESSIONE);
 				return;
 			}
 		}
 
-		if (orma_write_all(fd, data, len)) {
+		ultimo = orma_write_all(fd, data, len);
+		if (ultimo == ORMA_SCRITTURA_OK) {
 			ORMA_G(sent_frames)++;
 			/* Il frame appena consegnato dichiarava quanti se ne erano persi:
 			 * ora che il daemon lo sa, si riparte da zero. */
-			ORMA_G(dropped_frames) = 0;
+			for (int i = 0; i < ORMA_DROP_CAUSE; i++) {
+				ORMA_G(dropped)[i] = 0;
+			}
 			return;
 		}
 
 		orma_sender_close();
+
+		/* Un timeout non si ritenta: se il budget e' scaduto una volta, la
+		 * seconda lo sarebbe di nuovo e nel frattempo la richiesta aspetta. */
+		if (ultimo == ORMA_SCRITTURA_TIMEOUT) {
+			break;
+		}
 	}
 
-	orma_sender_drop();
+	orma_sender_drop(ultimo == ORMA_SCRITTURA_TIMEOUT
+	                 ? ORMA_DROP_TIMEOUT : ORMA_DROP_SCRITTURA);
 }
 
-void orma_sender_drop(void)
+void orma_sender_drop(int causa)
 {
-	if (ORMA_G(dropped_frames) < UINT32_MAX) {
-		ORMA_G(dropped_frames)++;
+	if (causa < 0 || causa >= ORMA_DROP_CAUSE) {
+		causa = ORMA_DROP_SCRITTURA;
+	}
+	if (ORMA_G(dropped)[causa] < UINT32_MAX) {
+		ORMA_G(dropped)[causa]++;
 	}
 	ORMA_G(dropped_total)++;
 }

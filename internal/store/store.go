@@ -22,7 +22,7 @@ import (
 // schemaVersion cambia a ogni modifica incompatibile delle tabelle. Prima
 // della 1.0 le tabelle vengono ricreate invece di essere migrate: i dati di
 // telemetria sono rimpiazzabili, il codice di migrazione no.
-const schemaVersion = 5
+const schemaVersion = 6
 
 // Categorie di metrica.
 const (
@@ -93,6 +93,7 @@ type Window struct {
 	Hosts   map[HostKey]*Simple
 	Traces  []*Trace
 	Errors  map[ErrKey]*ErrBucket
+	Profilo map[ProfKey]*ProfBucket
 }
 
 // NewWindow costruisce una finestra vuota.
@@ -102,13 +103,14 @@ func NewWindow() *Window {
 		SQL:     make(map[SQLKey]*Simple),
 		Hosts:   make(map[HostKey]*Simple),
 		Errors:  make(map[ErrKey]*ErrBucket),
+		Profilo: make(map[ProfKey]*ProfBucket),
 	}
 }
 
 // Empty indica se non c'e' nulla da scrivere.
 func (w *Window) Empty() bool {
 	return len(w.Metrics) == 0 && len(w.SQL) == 0 && len(w.Hosts) == 0 &&
-		len(w.Traces) == 0 && len(w.Errors) == 0
+		len(w.Traces) == 0 && len(w.Errors) == 0 && len(w.Profilo) == 0
 }
 
 // Store e' l'accesso al database.
@@ -225,7 +227,7 @@ func migrate(db *sql.DB, log *slog.Logger) error {
 		}
 		for _, t := range []string{
 			"metrics_1m", "metrics_5m", "metrics_1h",
-			"slow_sql", "externals", "traces", "errors",
+			"slow_sql", "externals", "traces", "errors", "profilo",
 		} {
 			if _, err := db.Exec(`DROP TABLE IF EXISTS ` + t); err != nil {
 				return fmt.Errorf("rimozione di %s: %w", t, err)
@@ -244,6 +246,9 @@ func migrate(db *sql.DB, log *slog.Logger) error {
 	}
 	if _, err := db.Exec(rollupSchema); err != nil {
 		return fmt.Errorf("creazione dello schema dei rollup: %w", err)
+	}
+	if _, err := db.Exec(profiloSchema); err != nil {
+		return fmt.Errorf("creazione dello schema del profilo: %w", err)
 	}
 	if _, err := db.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, schemaVersion)); err != nil {
 		return fmt.Errorf("scrittura di user_version: %w", err)
@@ -334,6 +339,11 @@ func (s *Store) WriteWindow(window int64, w *Window) error {
 			return err
 		}
 	}
+	for key := range w.Profilo {
+		if err := resolve(key.App); err != nil {
+			return err
+		}
+	}
 
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -373,6 +383,9 @@ func (s *Store) WriteWindow(window int64, w *Window) error {
 		return err
 	}
 	if err := writeErrors(tx, ids, window, w.Errors); err != nil {
+		return err
+	}
+	if err := writeProfilo(tx, ids, window, w.Profilo); err != nil {
 		return err
 	}
 

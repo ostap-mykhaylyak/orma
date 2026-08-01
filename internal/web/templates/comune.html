@@ -97,6 +97,10 @@
   .wf .stmt { color: var(--muted); font-size: .74rem; display: block;
               max-width: 60ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .wf tr.errore .etichetta { color: var(--err); }
+  /* Le righe dove il tempo si ferma davvero: sono il punto da cui partire. */
+  .wf tr.sospetto { background: color-mix(in srgb, var(--accent) 9%, transparent); }
+  .wf tr.sospetto .etichetta { font-weight: 600; }
+  .wf tr.sospetto .tag { border-color: var(--accent); color: var(--accent); }
   a.riga { color: inherit; text-decoration: none; box-shadow: 0 1px 0 var(--line); }
   a.riga:hover { box-shadow: 0 1px 0 var(--accent); }
   footer { margin-top: 2.5rem; color: var(--muted); font-size: .78rem; }

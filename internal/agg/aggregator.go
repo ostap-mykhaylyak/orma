@@ -62,9 +62,12 @@ type Aggregator struct {
 	log   *slog.Logger
 	opts  Options
 
-	finestreScritte atomic.Uint64
-	finestrePerse   atomic.Uint64
-	agentPerse      atomic.Uint64
+	finestreScritte  atomic.Uint64
+	finestrePerse    atomic.Uint64
+	agentPerse       atomic.Uint64
+	perseConnessione atomic.Uint64
+	perseTimeout     atomic.Uint64
+	perseScrittura   atomic.Uint64
 
 	mu      sync.Mutex
 	windows map[int64]*store.Window
@@ -91,8 +94,11 @@ func (a *Aggregator) Add(txn *protocol.Transaction) {
 		return
 	}
 
-	if txn.AgentDropped > 0 {
-		a.agentPerse.Add(uint64(txn.AgentDropped))
+	if n := txn.Perse.Totale(); n > 0 {
+		a.agentPerse.Add(uint64(n))
+		a.perseConnessione.Add(uint64(txn.Perse.Connessione))
+		a.perseTimeout.Add(uint64(txn.Perse.Timeout))
+		a.perseScrittura.Add(uint64(txn.Perse.Scrittura))
 	}
 
 	ts := int64(txn.StartUnixNano / 1e9)
@@ -203,6 +209,20 @@ func (a *Aggregator) Add(txn *protocol.Transaction) {
 		b.Count++
 	}
 
+	for _, voce := range txn.Profilo {
+		if voce.Funzione == "" {
+			continue
+		}
+		key := store.ProfKey{App: app, Txn: name, Funzione: voce.Funzione}
+		p := w.Profilo[key]
+		if p == nil {
+			p = &store.ProfBucket{}
+			w.Profilo[key] = p
+		}
+		p.Chiamate += uint64(voce.Chiamate)
+		p.SumNS += voce.Nano
+	}
+
 	// Il trace completo si conserva solo se e' lento o se e' andato male: e'
 	// questa regola che tiene lo storage proporzionale al numero di
 	// transazioni distinte invece che al traffico.
@@ -257,7 +277,17 @@ func buildTrace(txn *protocol.Transaction, app, name, kind string, ts int64) *st
 		DurationNS: txn.DurationNano,
 		HTTPStatus: txn.HTTPStatus,
 		HasError:   isError(txn),
+		Chiamate:   txn.Chiamate,
 		Spans:      make([]store.TraceSpan, 0, len(txn.Spans)),
+		Profilo:    make([]store.TraceProfilo, 0, len(txn.Profilo)),
+	}
+
+	for _, voce := range txn.Profilo {
+		t.Profilo = append(t.Profilo, store.TraceProfilo{
+			Funzione: voce.Funzione,
+			Chiamate: voce.Chiamate,
+			Nano:     voce.Nano,
+		})
 	}
 
 	for i := range txn.Spans {
@@ -277,6 +307,7 @@ func buildTrace(txn *protocol.Transaction, app, name, kind string, ts int64) *st
 			OffsetNS: offset,
 			DurNS:    span.DurationNano,
 			Status:   span.Status,
+			Chiamate: span.Chiamate,
 		}
 		// La radice resta senza genitore nel trace anche quando ne ha uno
 		// remoto: quel genitore vive in un altro servizio e nel waterfall
@@ -361,8 +392,14 @@ type Stats struct {
 	// AgentPerse e' quante transazioni gli agent dichiarano di non essere
 	// riusciti a consegnare. Se cresce, il daemon e' cieco su una parte del
 	// traffico e nessun'altra metrica lo direbbe.
-	AgentPerse     uint64
-	FinestreAperte int
+	AgentPerse uint64
+	// Le stesse perdite, per causa: connessione fallita vuol dire daemon fermo
+	// o permessi sbagliati, timeout vuol dire macchina carica o budget troppo
+	// stretto, scrittura vuol dire socket caduto sotto l'agent.
+	PerseConnessione uint64
+	PerseTimeout     uint64
+	PerseScrittura   uint64
+	FinestreAperte   int
 }
 
 // Stats restituisce una fotografia dei contatori.
@@ -372,10 +409,13 @@ func (a *Aggregator) Stats() Stats {
 	a.mu.Unlock()
 
 	return Stats{
-		FinestreScritte: a.finestreScritte.Load(),
-		FinestrePerse:   a.finestrePerse.Load(),
-		AgentPerse:      a.agentPerse.Load(),
-		FinestreAperte:  aperte,
+		FinestreScritte:  a.finestreScritte.Load(),
+		FinestrePerse:    a.finestrePerse.Load(),
+		AgentPerse:       a.agentPerse.Load(),
+		PerseConnessione: a.perseConnessione.Load(),
+		PerseTimeout:     a.perseTimeout.Load(),
+		PerseScrittura:   a.perseScrittura.Load(),
+		FinestreAperte:   aperte,
 	}
 }
 

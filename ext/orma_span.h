@@ -18,7 +18,7 @@ void orma_span_record(const char *name, size_t name_len, uint8_t kind,
                       const uint8_t span_id[ORMA_SPAN_ID_LEN],
                       const uint8_t parent_id[ORMA_SPAN_ID_LEN],
                       uint64_t start_unix_nano, uint64_t duration_nano,
-                      uint8_t status);
+                      uint8_t status, uint32_t chiamate);
 
 void orma_span_attr_str(int idx, const char *key, const char *value, size_t len);
 void orma_span_attr_int(int idx, const char *key, int64_t value);

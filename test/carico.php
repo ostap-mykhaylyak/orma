@@ -60,6 +60,30 @@ function generaAvvisi(): void
     }
 }
 
+// Riproduce il caso che il waterfall da solo non spiega: un metodo che dura a
+// lungo e sotto cui non compare nulla, perche' il tempo se ne va in funzioni
+// interne e non in chiamate applicative.
+final class Renderizzatore
+{
+    public function renderizza(string $contenuto): string
+    {
+        $dati = json_decode(json_encode(array_fill(0, 400, [
+            'id' => 1, 'titolo' => 'elemento', 'impostazioni' => range(1, 30),
+        ])), true);
+
+        $fuori = $contenuto;
+        for ($giro = 0; $giro < 300; $giro++) {
+            $fuori = preg_replace_callback(
+                '/\[(\w+)\s+([^\]]*)\]/',
+                static fn (array $c): string => strtoupper($c[1]) . ':' . md5($c[2]),
+                $fuori
+            );
+            $fuori .= ' ' . serialize($dati[$giro % 400]);
+        }
+        return $fuori;
+    }
+}
+
 function chiamaEsterni(): void
 {
     $ch = curl_init('http://127.0.0.1:8080/router.php?token=segreto');
@@ -80,6 +104,11 @@ $rapporto->genera();
 
 $st = $pdo->prepare('SELECT email FROM utenti WHERE id = ?');
 $st->execute([1]);
+
+if (isset($_GET['lento'])) {
+    $r = new Renderizzatore();
+    $r->renderizza(str_repeat('[shortcode attributo="valore"] testo ', 40));
+}
 
 if (isset($_GET['avvisi'])) {
     generaAvvisi();

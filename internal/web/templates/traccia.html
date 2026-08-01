@@ -6,18 +6,49 @@
     <div class="tile"><div class="k">Stato</div>
       <div class="v {{ if .Traccia.HasError }}err{{ end }}">{{ if .Traccia.HTTPStatus }}{{ .Traccia.HTTPStatus }}{{ else }}&mdash;{{ end }}</div></div>
     <div class="tile"><div class="k">Span</div><div class="v">{{ len .Traccia.Spans }}</div></div>
+    <div class="tile" title="chiamate di funzione utente, comprese quelle sotto soglia">
+      <div class="k">Chiamate</div><div class="v">{{ num32 .Traccia.Chiamate }}</div>
+    </div>
   </div>
+
+  {{ if .Traccia.Profilo }}
+  <h2>Dove va il tempo dentro PHP</h2>
+  <div class="scroll">
+    <table>
+      <thead>
+        <tr><th>Funzione</th><th>Chiamate</th><th>Tempo totale</th><th>Per chiamata</th></tr>
+      </thead>
+      <tbody>
+        {{ range .Traccia.Profilo }}
+        <tr>
+          <td class="name">{{ .Funzione }}</td>
+          <td class="n">{{ num32 .Chiamate }}</td>
+          <td class="n">{{ ms .MS }}</td>
+          <td class="n">{{ ms .PerChiamataMS }}</td>
+        </tr>
+        {{ end }}
+      </tbody>
+    </table>
+  </div>
+  <div class="legenda">
+    <span>{{ ms .Traccia.ProfiloMS }} su {{ ms .Traccia.DurationMS }} sono attribuiti a
+    queste funzioni. Il resto sta in codice PHP non profilato, nelle query o in attesa.</span>
+  </div>
+  {{ end }}
 
   <h2>Waterfall</h2>
   <div class="scroll">
     {{ if .Righe }}
     <table class="wf">
       <thead>
-        <tr><th>Span</th><th style="width:45%">Andamento</th><th>Inizio</th><th>Durata</th></tr>
+        <tr>
+          <th>Span</th><th style="width:34%">Andamento</th><th>Inizio</th>
+          <th>Durata</th><th>Proprio</th><th>Chiamate</th>
+        </tr>
       </thead>
       <tbody>
         {{ range .Righe }}
-        <tr {{ if .Span.Status }}class="errore"{{ end }}>
+        <tr {{ if .Span.Status }}class="errore"{{ else if .Sospetto }}class="sospetto"{{ end }}>
           <td>
             <span class="etichetta" style="padding-left:{{ indent .Depth }}rem">{{ .Span.Name }}</span>
             {{ with .Statement }}<span class="stmt">{{ . }}</span>{{ end }}
@@ -29,6 +60,10 @@
           </td>
           <td class="n">{{ offset .Span.OffsetNS }}</td>
           <td class="n">{{ ms .DurMS }}</td>
+          <td class="n" title="tempo non speso nei figli registrati">
+            {{ ms .PropriMS }}{{ if .Sospetto }} <span class="tag">qui</span>{{ end }}
+          </td>
+          <td class="n">{{ if .Span.Chiamate }}{{ num32 .Span.Chiamate }}{{ else }}&mdash;{{ end }}</td>
         </tr>
         {{ end }}
       </tbody>
@@ -42,6 +77,13 @@
     <span class="php">PHP</span>
     <span class="db">database</span>
     <span class="ext">chiamate esterne</span>
+  </div>
+  <div class="legenda">
+    <span><strong>Proprio</strong> &egrave; la durata meno quella dei figli registrati:
+    &egrave; il tempo speso davvero l&igrave;. Le righe marcate <span class="tag">qui</span>
+    sono quelle in cui il tempo si ferma, ed &egrave; da quelle che conviene partire.
+    <strong>Chiamate</strong> conta le funzioni eseguite dentro lo span, comprese quelle
+    troppo brevi per comparire: molte chiamate significano lavoro, poche significano attesa.</span>
   </div>
 
 {{ template "chiusura" . }}

@@ -21,12 +21,9 @@
     <h3 class="stato-attenzione">Attenzione</h3>
     <div class="scala">
       Alcuni dati non sono stati raccolti: le altre pagine mostrano numeri veri ma incompleti.
-      {{ if gt .Stato.AgentPerse 0 }}
-      Le transazioni perse dall'agent indicano che il daemon non stava accettando abbastanza in fretta,
-      o che era fermo mentre PHP serviva richieste.
-      {{ end }}
+      {{ with .Stato.Rimedio }}<br><strong>{{ . }}</strong>{{ end }}
       {{ if gt .Stato.FinestrePerse 0 }}
-      Le finestre perse indicano una scrittura su disco fallita.
+      <br>Le finestre perse indicano una scrittura su disco fallita.
       {{ end }}
     </div>
   </div>
@@ -42,6 +39,12 @@
             <td class="n">{{ num .Stato.FrameRifiutati }}</td></tr>
         <tr><td>Transazioni che l'agent non ha consegnato</td>
             <td class="n">{{ num .Stato.AgentPerse }}</td></tr>
+        <tr><td>&nbsp;&nbsp;&mdash; connessione al socket fallita</td>
+            <td class="n">{{ num .Stato.PerseConnessione }}</td></tr>
+        <tr><td>&nbsp;&nbsp;&mdash; budget di consegna scaduto</td>
+            <td class="n">{{ num .Stato.PerseTimeout }}</td></tr>
+        <tr><td>&nbsp;&nbsp;&mdash; socket caduto in scrittura</td>
+            <td class="n">{{ num .Stato.PerseScrittura }}</td></tr>
       </tbody>
     </table>
   </div>

@@ -63,6 +63,7 @@ foreach ([
   "/carico",
   "/carico?esterna=1",
   "/carico?avvisi=1",
+  "/carico?lento=1",
   "/guasto",
   "/api",
   "/silenzio",
@@ -140,7 +141,24 @@ sqlite3 -header -column /var/lib/orma/orma.db \
 	   FROM traces ORDER BY duration_ns DESC;" 2>/dev/null || echo "(tabella assente)"
 
 echo
-echo "== waterfall del trace piu' lento =="
+echo "== dove va il tempo dentro PHP =="
+sqlite3 -header -column /var/lib/orma/orma.db \
+	"SELECT funzione, SUM(chiamate) AS chiamate, ROUND(SUM(sum_ns)/1e6,1) AS tot_ms
+	   FROM profilo GROUP BY funzione ORDER BY SUM(sum_ns) DESC LIMIT 8;" 2>/dev/null \
+	|| echo "(tabella assente)"
+
+echo
+echo "== waterfall del trace piu' lento, con il tempo proprio =="
+sqlite3 /var/lib/orma/orma.db \
+	"SELECT json_extract(value,'\$.n') || '  durata ' ||
+	        ROUND(json_extract(value,'\$.d')/1e6,1) || ' ms, chiamate ' ||
+	        COALESCE(json_extract(value,'\$.c'), 0)
+	   FROM traces, json_each(traces.spans)
+	  WHERE traces.id = (SELECT id FROM traces ORDER BY duration_ns DESC LIMIT 1)
+	  ORDER BY json_extract(value,'\$.o');" 2>/dev/null | head -14
+
+echo
+echo "== waterfall grezzo (vecchia vista) =="
 sqlite3 /var/lib/orma/orma.db \
 	"SELECT json_extract(value,'\$.n') || '  ' || ROUND(json_extract(value,'\$.d')/1e6,3) || ' ms'
 	   FROM traces, json_each(traces.spans)

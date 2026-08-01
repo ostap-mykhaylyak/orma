@@ -16,10 +16,11 @@ import (
 	"math"
 )
 
-// Version e' la versione del protocollo supportata. La 2 aggiunge il conteggio
-// dei warning e la sezione degli eventi; la 3 aggiunge il numero di frame che
-// l'agent non e' riuscito a consegnare.
-const Version = 3
+// Version e' la versione del protocollo supportata. La 2 aggiunge i warning e
+// gli eventi; la 3 i frame che l'agent non ha consegnato; la 4 separa quei
+// frame per causa e aggiunge il conteggio delle chiamate e il profilo delle
+// funzioni interne.
+const Version = 4
 
 // Limiti di sanita': un mittente corretto non li raggiunge mai.
 const (
@@ -27,6 +28,7 @@ const (
 	maxSpans   = 4096
 	maxAttrs   = 256
 	maxEvents  = 256
+	maxProfilo = 256
 )
 
 // Severity distingue cio' che rompe una richiesta da cio' che la sporca.
@@ -113,7 +115,10 @@ type Span struct {
 	StartUnixNano uint64
 	DurationNano  uint64
 	Status        uint8
-	Attrs         []Attr
+	// Chiamate avvenute dentro questo span, annidate comprese. Distingue uno
+	// span lento perche' fa moltissimo da uno lento perche' aspetta.
+	Chiamate uint32
+	Attrs    []Attr
 }
 
 // Transaction e' una richiesta completa: lo span radice piu' i metadati di
@@ -136,12 +141,36 @@ type Transaction struct {
 	Errors       uint32
 	Warnings     uint32
 	SpansDropped uint32
-	// AgentDropped e' quante transazioni l'agent non e' riuscito a consegnare
-	// dall'ultima consegna riuscita. E' l'unico modo che il daemon ha per
-	// sapere di essere cieco su una parte del traffico.
-	AgentDropped uint32
-	Spans        []Span
-	Events       []Event
+	// Perse dice quante transazioni l'agent non ha consegnato dall'ultima
+	// consegna riuscita, e per quale causa. E' l'unico modo che il daemon ha
+	// per sapere di essere cieco su una parte del traffico, e sapere la causa
+	// e' cio' che distingue "daemon fermo" da "macchina carica".
+	Perse PerseAgent
+	// Chiamate e' il numero di chiamate di funzione utente della richiesta,
+	// comprese quelle rimaste sotto soglia.
+	Chiamate uint32
+	Spans    []Span
+	Events   []Event
+	Profilo  []VoceProfilo
+}
+
+// PerseAgent sono le transazioni non consegnate, per causa.
+type PerseAgent struct {
+	Connessione uint32
+	Timeout     uint32
+	Scrittura   uint32
+}
+
+// Totale e' la somma delle tre cause.
+func (p PerseAgent) Totale() uint32 {
+	return p.Connessione + p.Timeout + p.Scrittura
+}
+
+// VoceProfilo e' il costo complessivo di una funzione interna nella richiesta.
+type VoceProfilo struct {
+	Funzione string
+	Chiamate uint32
+	Nano     uint64
 }
 
 // ErrVersion indica un frame prodotto da una versione di protocollo diversa.
@@ -258,7 +287,14 @@ func Decode(frame []byte) (*Transaction, error) {
 	txn.Errors = r.u32()
 	txn.Warnings = r.u32()
 	txn.SpansDropped = r.u32()
-	txn.AgentDropped = r.u32()
+	txn.Perse.Connessione = r.u32()
+	txn.Perse.Timeout = r.u32()
+	txn.Perse.Scrittura = r.u32()
+	if c := r.u64(); c > math.MaxUint32 {
+		txn.Chiamate = math.MaxUint32
+	} else {
+		txn.Chiamate = uint32(c)
+	}
 
 	spanCount := r.u32()
 	if r.err != nil {
@@ -288,10 +324,44 @@ func Decode(frame []byte) (*Transaction, error) {
 	}
 	txn.Events = events
 
+	profilo, err := decodeProfilo(r, lookup)
+	if err != nil {
+		return nil, err
+	}
+	txn.Profilo = profilo
+
 	if r.err != nil {
 		return nil, r.err
 	}
 	return txn, nil
+}
+
+func decodeProfilo(r *reader, lookup func(uint32) string) ([]VoceProfilo, error) {
+	count := r.u32()
+	if r.err != nil {
+		return nil, r.err
+	}
+	if count > maxProfilo {
+		return nil, fmt.Errorf("troppe voci di profilo dichiarate: %d, massimo %d", count, maxProfilo)
+	}
+	// Ogni voce occupa 16 byte.
+	if int(count)*16 > r.remaining() {
+		return nil, fmt.Errorf("dichiarate %d voci di profilo ma restano %d byte", count, r.remaining())
+	}
+
+	out := make([]VoceProfilo, 0, count)
+	for i := uint32(0); i < count; i++ {
+		v := VoceProfilo{
+			Funzione: lookup(r.u32()),
+			Chiamate: r.u32(),
+			Nano:     r.u64(),
+		}
+		if r.err != nil {
+			return nil, r.err
+		}
+		out = append(out, v)
+	}
+	return out, nil
 }
 
 func decodeEvents(r *reader, lookup func(uint32) string) ([]Event, error) {
@@ -360,6 +430,7 @@ func decodeSpan(r *reader, lookup func(uint32) string) (Span, error) {
 	s.StartUnixNano = r.u64()
 	s.DurationNano = r.u64()
 	s.Status = r.u8()
+	s.Chiamate = r.u32()
 
 	attrCount := r.u16()
 	if r.err != nil {

@@ -25,6 +25,7 @@
 #include "orma_hooks.h"
 #include "orma_span.h"
 #include "orma_sql.h"
+#include "orma_txn.h"
 
 #include <string.h>
 #include <strings.h>
@@ -433,6 +434,65 @@ static void orma_hook_method(const char *cls, size_t cls_len,
 	fn->internal_function.handler = replacement;
 }
 
+/* ------------------------------------------- profilo delle funzioni interne */
+
+/*
+ * Il waterfall dice dove il tempo si accumula, non perche'. Un metodo che dura
+ * cinque secondi senza figli sopra soglia lascia esattamente dove si era: e'
+ * lento, e non si sa di cosa.
+ *
+ * Il profilo risponde a quella domanda contando chiamate e tempo delle funzioni
+ * interne che possono davvero costare. Non produce span — sarebbero migliaia —
+ * ma un totale per funzione, che e' la forma in cui l'informazione si legge:
+ * "dodicimila preg_replace_callback per tre secondi" chiude l'indagine.
+ *
+ * Costa due letture di orologio per chiamata delle sole funzioni in elenco, che
+ * e' curato apposta per escludere quelle banali chiamate a milioni.
+ */
+
+#define ORMA_PROFILO_ORIGINALE(nome) static zif_handler orma_orig_prof_##nome;
+ORMA_FUNZIONI_PROFILATE(ORMA_PROFILO_ORIGINALE)
+
+#define ORMA_PROFILO_NOME(nome) #nome,
+static const char *const orma_nomi_profilati[] = {
+	ORMA_FUNZIONI_PROFILATE(ORMA_PROFILO_NOME)
+};
+
+const char *orma_profilo_nome(int indice)
+{
+	if (indice < 0 || indice >= ORMA_PROF_TOTALE) {
+		return "";
+	}
+	return orma_nomi_profilati[indice];
+}
+
+static void orma_profilo_chiama(int indice, zif_handler originale,
+                                zend_execute_data *execute_data, zval *return_value)
+{
+	if (!ORMA_G(txn).active || !ORMA_G(profile_internals)) {
+		originale(execute_data, return_value);
+		return;
+	}
+
+	uint64_t inizio = orma_now_monotonic_nano();
+	originale(execute_data, return_value);
+	uint64_t fine = orma_now_monotonic_nano();
+
+	orma_profilo *voce = &ORMA_G(txn).profilo[indice];
+	voce->chiamate++;
+	if (fine > inizio) {
+		voce->nanosecondi += fine - inizio;
+	}
+}
+
+#define ORMA_PROFILO_HANDLER(nome)                                            \
+	static void orma_prof_##nome(INTERNAL_FUNCTION_PARAMETERS)                \
+	{                                                                          \
+		orma_profilo_chiama(ORMA_PROF_##nome, orma_orig_prof_##nome,          \
+		                    execute_data, return_value);                      \
+	}
+ORMA_FUNZIONI_PROFILATE(ORMA_PROFILO_HANDLER)
+
 /* Le chiavi delle tabelle di funzioni e classi sono in minuscolo. */
 #define ORMA_HOOK_FN(name, handler, slot) \
 	orma_hook_function(name, sizeof(name) - 1, handler, &slot)
@@ -465,4 +525,13 @@ void orma_hooks_install(void)
 	                 orma_mysqli_method_prepare_handler, orig_mysqli_method_prepare);
 	ORMA_HOOK_METHOD("mysqli_stmt", "execute",
 	                 orma_mysqli_stmt_method_execute_handler, orig_mysqli_stmt_method_execute);
+
+	/* Il profilo si installa per ultimo: dove una funzione e' gia' avvolta,
+	 * per esempio file_get_contents, l'involucro del profilo finisce fuori e
+	 * misura anche il tempo dell'altro. E' l'ordine giusto: il profilo deve
+	 * riportare il costo reale della chiamata come la vede l'applicazione. */
+#define ORMA_PROFILO_INSTALLA(nome)                                            \
+	orma_hook_function(#nome, sizeof(#nome) - 1, orma_prof_##nome,             \
+	                   &orma_orig_prof_##nome);
+	ORMA_FUNZIONI_PROFILATE(ORMA_PROFILO_INSTALLA)
 }

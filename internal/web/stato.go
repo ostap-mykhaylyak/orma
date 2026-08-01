@@ -24,8 +24,11 @@ type Stato struct {
 	ByteRicevuti   uint64
 	FrameRifiutati uint64
 
-	AgentPerse      uint64
-	FinestreScritte uint64
+	AgentPerse       uint64
+	PerseConnessione uint64
+	PerseTimeout     uint64
+	PerseScrittura   uint64
+	FinestreScritte  uint64
 	FinestrePerse   uint64
 	FinestreAperte  int
 
@@ -58,6 +61,26 @@ func (s Stato) ByteLeggibili() string {
 // InSalute e' falso quando c'e' qualcosa che l'operatore deve guardare.
 func (s Stato) InSalute() bool {
 	return s.AgentPerse == 0 && s.FinestrePerse == 0 && s.FrameRifiutati == 0
+}
+
+// Rimedio traduce la causa prevalente delle perdite in cosa fare.
+//
+// Un contatore che sale senza dire cosa farci e' un contatore che si impara a
+// ignorare: qui la causa piu' frequente diventa una frase operativa.
+func (s Stato) Rimedio() string {
+	switch {
+	case s.AgentPerse == 0:
+		return ""
+	case s.PerseConnessione >= s.PerseTimeout && s.PerseConnessione >= s.PerseScrittura:
+		return "Connessione al socket fallita: il daemon era fermo, oppure i worker PHP " +
+			"non hanno il permesso di scrivere sul socket. Controlla socket_group."
+	case s.PerseTimeout >= s.PerseScrittura:
+		return "Budget di consegna scaduto: la macchina era carica e cinque millisecondi " +
+			"non sono bastati. Alza orma.send_timeout_ms nell'INI dell'estensione."
+	default:
+		return "Socket caduto durante la scrittura: succede quando il daemon viene " +
+			"riavviato mentre PHP sta servendo richieste."
+	}
 }
 
 func byteLeggibili(n int64) string {

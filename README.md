@@ -112,11 +112,37 @@ I verbi di servizio si scrivono senza trattini, tutto il resto con i trattini.
 | Database | le query aggregate per forma, già offuscate |
 | Esterne | le chiamate uscenti per host |
 | Errori | errori ed eccezioni raggruppati per forma, fatali distinti dagli avvisi |
-| Tracce | le richieste conservate per intero, con il waterfall |
+| Tracce | le richieste conservate per intero, con il waterfall, il tempo proprio di ogni span e il profilo delle funzioni interne |
 | Stato | i contatori del daemon: quanto ha ricevuto, quanto ha perso, quanto occupa |
 
 I grafici sono SVG generato dal server: nessuno script, nessuna libreria, niente che
 possa non caricarsi.
+
+### Capire perché è lento
+
+Un waterfall da solo dice *dove* il tempo si accumula, non *perché*. Un metodo che dura
+cinque secondi con sotto un figlio che ne dura cinque non aggiunge niente. Tre cose
+chiudono l'indagine:
+
+**Il tempo proprio.** Ogni span mostra la durata meno quella dei figli registrati. Le
+righe dove il tempo si ferma davvero sono marcate: sono quelle da cui partire.
+
+**Il conteggio delle chiamate.** Quante funzioni sono state eseguite dentro uno span,
+comprese quelle troppo brevi per comparire. Molte chiamate significano lavoro, poche
+significano attesa — due problemi con due rimedi opposti.
+
+**Il profilo delle funzioni interne.** Espressioni regolari, serializzazione, accessi al
+filesystem, compressione, immagini, attese: quante volte e per quanto. Su una homepage
+WordPress il risultato è di questo tipo, per richiesta:
+
+```
+file_exists            162 chiamate
+json_decode            140 chiamate
+preg_match            1409 chiamate
+file_get_contents       59 chiamate
+```
+
+Si disattiva con `orma.profile_internals=0`.
 
 ## Configurazione
 
@@ -254,11 +280,18 @@ L'estensione si configura nel suo INI:
 
 ```ini
 orma.app_name=nome-del-sito
-orma.detail=1        ; 0 nessuna instrumentazione delle funzioni utente, 1 sopra soglia, 2 tutto
-orma.function_ms=5   ; soglia per detail=1
+orma.detail=1              ; 0 nessuna instrumentazione delle funzioni utente, 1 sopra soglia, 2 tutto
+orma.function_ms=5         ; soglia per detail=1
 orma.max_depth=5
+orma.profile_internals=1   ; profilo di preg_*, json_*, filesystem, immagini, attese
+orma.send_timeout_ms=5     ; budget di consegna: scaduto, il frame si perde
 ;orma.ignored_exceptions=DomainException,Miaapp\FlussoInterrotto
 ```
+
+`orma.send_timeout_ms` è il tempo che la consegna della telemetria può sottrarre a una
+richiesta. Scaduto, il frame si perde: perdere telemetria è preferibile a rallentare
+l'utente. Su una macchina carica cinque millisecondi possono non bastare — la pagina
+**Stato** dice quante transazioni si sono perse e per quale causa, e cosa fare.
 
 ## Cosa costa
 

@@ -19,7 +19,26 @@ type TraceSpan struct {
 	OffsetNS uint64            `json:"o"`
 	DurNS    uint64            `json:"d"`
 	Status   uint8             `json:"s,omitempty"`
+	Chiamate uint32            `json:"c,omitempty"`
 	Attrs    map[string]string `json:"a,omitempty"`
+}
+
+// TraceProfilo e' il costo di una funzione interna dentro un trace.
+type TraceProfilo struct {
+	Funzione string `json:"f"`
+	Chiamate uint32 `json:"c"`
+	Nano     uint64 `json:"n"`
+}
+
+// MS e' il tempo totale in millisecondi.
+func (t TraceProfilo) MS() float64 { return float64(t.Nano) / 1e6 }
+
+// PerChiamataMS distingue tante chiamate banali da poche costose.
+func (t TraceProfilo) PerChiamataMS() float64 {
+	if t.Chiamate == 0 {
+		return 0
+	}
+	return t.MS() / float64(t.Chiamate)
 }
 
 // Trace e' una transazione conservata per intero.
@@ -32,7 +51,18 @@ type Trace struct {
 	DurationNS uint64
 	HTTPStatus uint16
 	HasError   bool
+	Chiamate   uint32
 	Spans      []TraceSpan
+	Profilo    []TraceProfilo
+}
+
+// ProfiloMS e' il tempo totale attribuito alle funzioni interne profilate.
+func (t Trace) ProfiloMS() float64 {
+	var totale float64
+	for _, p := range t.Profilo {
+		totale += p.MS()
+	}
+	return totale
 }
 
 // DurationMS e' la durata in millisecondi.
@@ -46,11 +76,37 @@ type Riga struct {
 	Depth     int
 	OffsetPct float64
 	WidthPct  float64
+	// PropriNS e' la durata meno quella dei figli registrati: e' il tempo
+	// speso davvero qui. Senza, un genitore da cinque secondi con un figlio da
+	// cinque secondi sembra il colpevole mentre non lo e'.
+	PropriNS uint64
+	// Figli registrati, per capire se il tempo proprio e' lavoro vero o solo
+	// chiamate rimaste sotto soglia.
+	Figli int
 }
 
 // DurMS e' la durata dello span in millisecondi.
 func (r Riga) DurMS() float64 {
 	return float64(r.Span.DurNS) / 1e6
+}
+
+// PropriMS e' il tempo speso in questo span e non nei figli registrati.
+func (r Riga) PropriMS() float64 {
+	return float64(r.PropriNS) / 1e6
+}
+
+// PropriPct e' la quota del tempo dello span che gli appartiene davvero.
+func (r Riga) PropriPct() float64 {
+	if r.Span.DurNS == 0 {
+		return 0
+	}
+	return float64(r.PropriNS) / float64(r.Span.DurNS) * 100
+}
+
+// Sospetto marca le righe su cui vale la pena guardare: quasi tutto il loro
+// tempo e' proprio, quindi il rallentamento e' li' e non piu' in basso.
+func (r Riga) Sospetto() bool {
+	return r.PropriNS > 50*1e6 && r.PropriPct() >= 60
 }
 
 // Categoria classifica lo span per colorarlo nel waterfall.
@@ -120,9 +176,22 @@ func (t Trace) Waterfall() []Riga {
 			offset = 0
 		}
 
-		out = append(out, Riga{Span: span, Depth: depth, OffsetPct: offset, WidthPct: width})
-
 		kids := children[span.ID]
+
+		var figliNS uint64
+		for _, kid := range kids {
+			figliNS += kid.DurNS
+		}
+		propri := uint64(0)
+		if span.DurNS > figliNS {
+			propri = span.DurNS - figliNS
+		}
+
+		out = append(out, Riga{
+			Span: span, Depth: depth, OffsetPct: offset, WidthPct: width,
+			PropriNS: propri, Figli: len(kids),
+		})
+
 		for i := 0; i < len(kids); i++ {
 			for j := i + 1; j < len(kids); j++ {
 				if kids[j].OffsetNS < kids[i].OffsetNS {
@@ -151,8 +220,10 @@ CREATE TABLE IF NOT EXISTS traces (
 	duration_ns INTEGER NOT NULL,
 	http_status INTEGER NOT NULL,
 	has_error   INTEGER NOT NULL,
+	chiamate    INTEGER NOT NULL DEFAULT 0,
 	-- TEXT e non BLOB: le funzioni json_* di SQLite lavorano sul testo.
-	spans       TEXT    NOT NULL
+	spans       TEXT    NOT NULL,
+	profilo     TEXT    NOT NULL DEFAULT '[]'
 );
 
 CREATE INDEX IF NOT EXISTS traces_ts ON traces (ts);
@@ -209,12 +280,16 @@ func (s *Store) Trace(id int64) (*Trace, error) {
 	var status, hasError int
 	var payload []byte
 
+	var profilo []byte
+	var chiamate int64
+
 	err := s.db.QueryRow(
 		`SELECT t.id, a.name, t.txn_name, t.kind, t.ts, t.duration_ns,
-		        t.http_status, t.has_error, t.spans
+		        t.http_status, t.has_error, t.chiamate, t.spans, t.profilo
 		   FROM traces t JOIN apps a ON a.id = t.app_id
 		  WHERE t.id = ?`, id).
-		Scan(&t.ID, &t.App, &t.Name, &t.Kind, &t.TS, &durNS, &status, &hasError, &payload)
+		Scan(&t.ID, &t.App, &t.Name, &t.Kind, &t.TS, &durNS, &status, &hasError,
+			&chiamate, &payload, &profilo)
 	if err != nil {
 		return nil, err
 	}
@@ -222,9 +297,14 @@ func (s *Store) Trace(id int64) (*Trace, error) {
 	t.DurationNS = uint64(durNS)
 	t.HTTPStatus = uint16(status)
 	t.HasError = hasError != 0
+	t.Chiamate = uint32(chiamate)
 
 	if err := json.Unmarshal(payload, &t.Spans); err != nil {
 		return nil, fmt.Errorf("payload del trace %d illeggibile: %w", id, err)
+	}
+	if len(profilo) > 0 {
+		// Un profilo illeggibile non deve impedire di guardare il waterfall.
+		_ = json.Unmarshal(profilo, &t.Profilo)
 	}
 	return &t, nil
 }
@@ -235,15 +315,21 @@ func writeTraces(tx *sql.Tx, appIDs map[string]int64, traces []*Trace) error {
 		if err != nil {
 			return err
 		}
+		profilo, err := json.Marshal(t.Profilo)
+		if err != nil {
+			return err
+		}
 		hasError := 0
 		if t.HasError {
 			hasError = 1
 		}
 		if _, err := tx.Exec(
-			`INSERT INTO traces (app_id, ts, txn_name, kind, duration_ns, http_status, has_error, spans)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			`INSERT INTO traces
+			 (app_id, ts, txn_name, kind, duration_ns, http_status, has_error, chiamate, spans, profilo)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			appIDs[t.App], t.TS, t.Name, t.Kind, int64(t.DurationNS),
-			int(t.HTTPStatus), hasError, string(payload)); err != nil {
+			int(t.HTTPStatus), hasError, int64(t.Chiamate),
+			string(payload), string(profilo)); err != nil {
 			return err
 		}
 	}

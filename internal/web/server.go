@@ -48,6 +48,7 @@ func New(st *store.Store, log *slog.Logger, opts Opzioni) (*Server, error) {
 	funcs := template.FuncMap{
 		"ms":      func(v float64) string { return fmt.Sprintf("%.1f ms", v) },
 		"num":     func(v uint64) string { return strconv.FormatUint(v, 10) },
+		"num32":   func(v uint32) string { return strconv.FormatUint(uint64(v), 10) },
 		"perc":    func(v float64) string { return fmt.Sprintf("%.2f%%", v) },
 		"rate":    func(v float64) string { return fmt.Sprintf("%.1f/min", v) },
 		"seconds": func(v float64) string { return fmt.Sprintf("%.2f s", v/1000) },
@@ -255,6 +256,7 @@ type datiTransazione struct {
 	Dettaglio store.DettaglioTxn
 	Grafico   Grafico
 	Tracce    []store.TraceRow
+	Profilo   []store.ProfStat
 }
 
 type datiDatabase struct {
@@ -323,9 +325,13 @@ func (s *Server) costruisciTransazione(since int64, nome string, c comune) (dati
 	if err != nil {
 		return out, fmt.Errorf("trace della transazione: %w", err)
 	}
+	profilo, err := s.store.Profilo(since, nome, 25)
+	if err != nil {
+		return out, fmt.Errorf("profilo della transazione: %w", err)
+	}
 
 	return datiTransazione{comune: c, Dettaglio: dettaglio,
-		Grafico: costruisciGrafico(punti, passo), Tracce: tracce}, nil
+		Grafico: costruisciGrafico(punti, passo), Tracce: tracce, Profilo: profilo}, nil
 }
 
 func (s *Server) costruisciDatabase(since int64, c comune) (datiDatabase, error) {

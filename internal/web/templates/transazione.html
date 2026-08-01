@@ -41,6 +41,34 @@
     </table>
   </div>
 
+  {{ if .Profilo }}
+  <h2>Dove va il tempo dentro PHP</h2>
+  <div class="scroll">
+    <table>
+      <thead>
+        <tr><th>Funzione</th><th>Chiamate</th><th>Tempo totale</th><th>Per chiamata</th><th>Quota</th></tr>
+      </thead>
+      <tbody>
+        {{ range .Profilo }}
+        <tr>
+          <td class="name">{{ .Funzione }}</td>
+          <td class="n">{{ num .Chiamate }}</td>
+          <td class="n">{{ seconds .TotalMS }}</td>
+          <td class="n">{{ ms .PerChiamataMS }}</td>
+          <td class="n">{{ perc .QuotaPct }}</td>
+        </tr>
+        {{ end }}
+      </tbody>
+    </table>
+  </div>
+  <div class="legenda">
+    <span>Costo delle funzioni interne che possono davvero pesare: espressioni regolari,
+    serializzazione, accessi al filesystem, compressione, immagini, attese. La quota
+    &egrave; sul tempo profilato, non sull'intera richiesta. <strong>Per chiamata</strong>
+    distingue tante chiamate banali da poche costose: sono due problemi diversi.</span>
+  </div>
+  {{ end }}
+
   <h2>Trace conservati</h2>
   <div class="scroll">
     {{ if .Tracce }}

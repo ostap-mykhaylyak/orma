@@ -17,7 +17,7 @@ extern zend_module_entry orma_module_entry;
  * protocol.Version nel daemon. Alzata a 2 dal M4, che aggiunge la sezione
  * degli errori in coda al frame: un daemon vecchio rifiuta il frame con un
  * messaggio chiaro invece di interpretarlo male. */
-#define ORMA_PROTOCOL_VERSION 3
+#define ORMA_PROTOCOL_VERSION 4
 
 /* Errori conservati per transazione. Oltre, si contano soltanto: cento
  * warning identici non aggiungono informazione. */
@@ -33,10 +33,14 @@ extern zend_module_entry orma_module_entry;
  * quasi sempre il sintomo di una normalizzazione che non ha fatto il suo lavoro. */
 #define ORMA_MAX_NAME 512
 
-/* Budget massimo, in millisecondi, che il flush puo' sottrarre alla richiesta.
- * Scaduto questo, il frame si perde e si incrementa un contatore: perdere
- * telemetria e' sempre preferibile a rallentare l'utente. */
-#define ORMA_SEND_TIMEOUT_MS 5
+/* Cause per cui un frame puo' non arrivare. Tenute distinte perche' hanno
+ * rimedi diversi: la connessione fallita vuol dire daemon fermo o permessi
+ * sbagliati, il timeout vuol dire macchina carica o budget troppo stretto,
+ * l'errore di scrittura vuol dire socket caduto sotto di noi. */
+#define ORMA_DROP_CONNESSIONE 0
+#define ORMA_DROP_TIMEOUT     1
+#define ORMA_DROP_SCRITTURA   2
+#define ORMA_DROP_CAUSE       3
 
 /* Tetto agli span per transazione. Oltre, si tronca e si conta: un trace
  * troncato e dichiarato e' utile, uno troncato in silenzio e' una bugia. */
@@ -92,9 +96,53 @@ typedef struct _orma_attr {
 #define ORMA_DETAIL_SOGLIA 1  /* solo le funzioni che superano la soglia */
 #define ORMA_DETAIL_TUTTO  2  /* ogni chiamata */
 
+/* Funzioni interne di cui si tiene il profilo: quante volte sono state
+ * chiamate e quanto sono costate in tutto.
+ *
+ * Sono la risposta alla domanda che il waterfall da solo non regge: un metodo
+ * che dura cinque secondi senza figli sopra soglia non dice niente, mentre
+ * "dodicimila preg_replace_callback per tre secondi" dice tutto.
+ *
+ * L'elenco e' curato a mano: si escludono le funzioni banali chiamate a
+ * milioni, dove il costo di cronometrarle supererebbe quello di eseguirle. */
+#define ORMA_FUNZIONI_PROFILATE(X) \
+	X(preg_match) X(preg_match_all) X(preg_replace) X(preg_replace_callback) \
+	X(preg_split) X(preg_quote) \
+	X(json_decode) X(json_encode) \
+	X(serialize) X(unserialize) \
+	X(file_get_contents) X(file_put_contents) X(fopen) X(file_exists) \
+	X(is_file) X(is_dir) X(filemtime) X(filesize) X(glob) X(scandir) \
+	X(unlink) X(copy) X(rename) X(mkdir) X(realpath) \
+	X(gzcompress) X(gzuncompress) X(gzdecode) X(gzencode) \
+	X(hash) X(md5) X(sha1) X(crc32) X(password_hash) X(password_verify) \
+	X(usort) X(uasort) X(uksort) \
+	X(base64_decode) X(base64_encode) \
+	X(mb_convert_encoding) X(iconv) \
+	X(simplexml_load_string) X(dom_import_simplexml) \
+	X(imagecreatefromjpeg) X(imagecreatefrompng) X(imagejpeg) X(imagepng) \
+	X(imagecopyresampled) X(imagecopyresized) \
+	X(sleep) X(usleep) \
+	X(curl_multi_exec) X(curl_multi_select) \
+	X(opcache_compile_file) X(get_headers) X(dns_get_record) X(gethostbyname)
+
+#define ORMA_PROFILO_INDICE(nome) ORMA_PROF_##nome,
+typedef enum {
+	ORMA_FUNZIONI_PROFILATE(ORMA_PROFILO_INDICE)
+	ORMA_PROF_TOTALE
+} orma_funzione_profilata;
+
+typedef struct _orma_profilo {
+	uint32_t chiamate;
+	uint64_t nanosecondi;
+} orma_profilo;
+
 typedef struct _orma_span {
 	uint8_t   span_id[ORMA_SPAN_ID_LEN];
 	uint8_t   parent_span_id[ORMA_SPAN_ID_LEN];
+	/* Chiamate di funzione utente avvenute dentro questo span, comprese
+	 * quelle rimaste sotto soglia e quindi mai emesse. Distingue "lento
+	 * perche' fa un milione di cose" da "lento perche' aspetta". */
+	uint32_t  chiamate;
 	uint32_t  name_off;
 	uint32_t  name_len;
 	uint8_t   kind;
@@ -173,7 +221,15 @@ typedef struct _orma_txn {
 
 	orma_custom_attr custom[ORMA_MAX_CUSTOM_ATTRS];
 	uint32_t         custom_count;
+
+	/* Chiamate di funzione utente in tutta la richiesta. */
+	uint64_t chiamate;
+
+	orma_profilo profilo[ORMA_PROF_TOTALE];
 } orma_txn;
+
+/* Nome della funzione profilata, per indice. */
+const char *orma_profilo_nome(int indice);
 
 ZEND_BEGIN_MODULE_GLOBALS(orma)
 	/* Direttive INI. */
@@ -183,6 +239,8 @@ ZEND_BEGIN_MODULE_GLOBALS(orma)
 	zend_long detail;
 	zend_long function_ms;
 	zend_long max_depth;
+	zend_long send_timeout_ms;
+	bool      profile_internals;
 	char     *ignored_exceptions;
 
 	/* Stato di processo: il socket e' per worker, mai ereditato. */
@@ -190,10 +248,10 @@ ZEND_BEGIN_MODULE_GLOBALS(orma)
 	pid_t  sock_pid;
 
 	uint64_t sent_frames;
-	/* Frame persi dall'ultima consegna riuscita. Viaggiano dentro il frame
-	 * successivo: e' l'unico modo perche' il daemon sappia quanto non gli e'
-	 * arrivato. Azzerato a ogni consegna riuscita. */
-	uint32_t dropped_frames;
+	/* Frame persi dall'ultima consegna riuscita, per causa. Viaggiano dentro
+	 * il frame successivo: e' l'unico modo perche' il daemon sappia quanto non
+	 * gli e' arrivato, e perche'. Azzerati a ogni consegna riuscita. */
+	uint32_t dropped[ORMA_DROP_CAUSE];
 	/* Totale di processo, solo per phpinfo. */
 	uint64_t dropped_total;
 

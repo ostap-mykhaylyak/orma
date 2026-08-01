@@ -591,8 +591,11 @@ func doStart(cfg config.Config, configPath string) error {
 				FrameRicevuti:   frames,
 				ByteRicevuti:    bytes,
 				FrameRifiutati:  rifiutati,
-				AgentPerse:      s.AgentPerse,
-				FinestreScritte: s.FinestreScritte,
+				AgentPerse:       s.AgentPerse,
+				PerseConnessione: s.PerseConnessione,
+				PerseTimeout:     s.PerseTimeout,
+				PerseScrittura:   s.PerseScrittura,
+				FinestreScritte:  s.FinestreScritte,
 				FinestrePerse:   s.FinestrePerse,
 				FinestreAperte:  s.FinestreAperte,
 			}

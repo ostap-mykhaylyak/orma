@@ -40,6 +40,10 @@ typedef struct _orma_frame {
 	 * questo frame e' tracciato, altrimenti quello ereditato. */
 	uint8_t  inherited[ORMA_SPAN_ID_LEN];
 	uint64_t start_monotonic_nano;
+	/* Valore del contatore globale all'ingresso: la differenza a fine frame
+	 * da' quante chiamate sono avvenute dentro, comprese quelle rimaste sotto
+	 * soglia e le annidate, in tempo costante. */
+	uint64_t chiamate_inizio;
 	bool     tracked;
 } orma_frame;
 
@@ -130,6 +134,12 @@ static void orma_observer_begin(zend_execute_data *execute_data)
 		return;
 	}
 
+	/* Si contano tutte, anche quelle che non si cronometrano: e' il numero che
+	 * distingue "lento perche' fa un milione di cose" da "lento perche'
+	 * aspetta", e senza di esso un metodo da cinque secondi senza figli sopra
+	 * soglia resta inspiegabile. */
+	ORMA_G(txn).chiamate++;
+
 	/* Oltre la profondita' massima non si cronometra: invece di scrivere un
 	 * frame che non servira' a nulla, si contano le chiamate saltate. Su una
 	 * ricorsione profonda e' la differenza fra due memcpy per chiamata e un
@@ -159,6 +169,7 @@ static void orma_observer_begin(zend_execute_data *execute_data)
 	 * esattamente lo stesso valore, e costa una syscall in meno su ogni
 	 * chiamata di funzione osservata. */
 	f->start_monotonic_nano = orma_now_monotonic_nano();
+	f->chiamate_inizio = ORMA_G(txn).chiamate;
 
 	ORMA_G(depth)++;
 }
@@ -211,10 +222,16 @@ static void orma_observer_end(zend_execute_data *execute_data, zval *return_valu
 	uint64_t start_unix = txn->start_unix_nano
 	                    + (f->start_monotonic_nano - txn->start_monotonic_nano);
 
+	uint64_t chiamate = ORMA_G(txn).chiamate - f->chiamate_inizio;
+	if (chiamate > UINT32_MAX) {
+		chiamate = UINT32_MAX;
+	}
+
 	orma_span_record(name, name_len, ORMA_SPAN_INTERNAL,
 	                 f->span_id, f->parent_id,
 	                 start_unix, duration,
-	                 EG(exception) != NULL ? ORMA_STATUS_ERROR : ORMA_STATUS_OK);
+	                 EG(exception) != NULL ? ORMA_STATUS_ERROR : ORMA_STATUS_OK,
+	                 (uint32_t)chiamate);
 }
 
 static zend_observer_fcall_handlers orma_observer_init(zend_execute_data *execute_data)

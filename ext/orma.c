@@ -42,6 +42,15 @@ PHP_INI_BEGIN()
 		function_ms, zend_orma_globals, orma_globals)
 	STD_PHP_INI_ENTRY("orma.max_depth", "5", PHP_INI_SYSTEM, OnUpdateLong,
 		max_depth, zend_orma_globals, orma_globals)
+	/* Millisecondi che la consegna puo' sottrarre alla richiesta. Scaduti, il
+	 * frame si perde: perdere telemetria e' preferibile a rallentare l'utente.
+	 * Su una macchina carica cinque possono essere pochi. */
+	STD_PHP_INI_ENTRY("orma.send_timeout_ms", "5", PHP_INI_SYSTEM, OnUpdateLong,
+		send_timeout_ms, zend_orma_globals, orma_globals)
+	/* Profilo delle funzioni interne costose: risponde al perche' di una
+	 * lentezza che il waterfall da solo non spiega. */
+	STD_PHP_INI_BOOLEAN("orma.profile_internals", "1", PHP_INI_SYSTEM, OnUpdateBool,
+		profile_internals, zend_orma_globals, orma_globals)
 	/* Classi di eccezione da non registrare, separate da virgola. Per le
 	 * applicazioni che usano le eccezioni come controllo di flusso. */
 	STD_PHP_INI_ENTRY("orma.ignored_exceptions", "", PHP_INI_SYSTEM, OnUpdateString,
@@ -184,6 +193,13 @@ PHP_MINFO_FUNCTION(orma)
 	php_info_print_table_row(2, "Hostname", ORMA_G(hostname));
 	php_info_print_table_row(2, "Frame consegnati", sent);
 	php_info_print_table_row(2, "Frame persi", dropped);
+
+	char cause[96];
+	snprintf(cause, sizeof(cause), "connessione %u, timeout %u, scrittura %u",
+		ORMA_G(dropped)[ORMA_DROP_CONNESSIONE],
+		ORMA_G(dropped)[ORMA_DROP_TIMEOUT],
+		ORMA_G(dropped)[ORMA_DROP_SCRITTURA]);
+	php_info_print_table_row(2, "Persi dall'ultima consegna", cause);
 	php_info_print_table_end();
 
 	DISPLAY_INI_ENTRIES();
