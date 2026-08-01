@@ -14,7 +14,7 @@ LDFLAGS := -X $(MODULE)/internal/version.Version=$(VERSION) \
 
 DOCKER_RUN = docker run --rm -v "$(CURDIR)":/src -w /src/ext $(IMAGE) sh -c
 
-.PHONY: all image ext ext-test ext-clean daemon test smoke asan overhead wordpress clean
+.PHONY: all image ext ext-test ext-clean daemon test smoke asan overhead wordpress systemd clean
 
 all: ext daemon
 
@@ -55,6 +55,17 @@ overhead: image daemon
 wordpress: ext daemon
 	cd test/fpm && docker compose down -v
 	cd test/fpm && docker compose up --build --abort-on-container-exit --exit-code-from web
+
+# systemd come PID 1: senza init, systemctl non ha con chi parlare e l'unit
+# resterebbe verificata solo sulla carta.
+systemd: ext daemon
+	docker build -t orma-systemd test/systemd
+	-docker rm -f orma-sd
+	docker run -d --name orma-sd --privileged --cgroupns=host \
+		-v /sys/fs/cgroup:/sys/fs/cgroup:rw -v "$(CURDIR)":/src:ro orma-systemd
+	sleep 8
+	docker exec orma-sd sh /src/test/systemd/prova.sh
+	docker rm -f orma-sd
 
 clean: ext-clean
 	rm -rf dist

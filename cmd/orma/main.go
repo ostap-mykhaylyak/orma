@@ -114,8 +114,19 @@ func run(args []string) error {
 		return err
 	}
 
+	// Con il servizio attivo, i verbi passano da systemd: altrimenti un
+	// "orma restart" lascerebbe systemd a inseguire un processo che non c'e'
+	// piu' e ne farebbe partire un secondo.
+	if gestito, err := delegaSystemd(opts.verb); gestito {
+		return err
+	}
+
 	switch opts.verb {
 	case "start":
+		if install.UnitInstallata() {
+			fmt.Fprintln(os.Stderr,
+				"nota: il servizio e' installato, la via gestita e' \"systemctl start orma\"")
+		}
 		return doStart(cfg, opts.configPath)
 	case "stop":
 		return doStop(cfg)
@@ -260,8 +271,11 @@ func doInit(opts options) error {
 	fmt.Printf("\nToken di accesso all'interfaccia:\n\n  %s\n\n", token)
 	fmt.Printf("  http://%s/?token=%s\n\n", cfg.Listen, token)
 
+	scrivibili := []string{filepath.Dir(cfg.Database), filepath.Dir(cfg.Socket)}
+
 	if opts.senzaEstensione {
 		fmt.Print("\nEstensione non installata (--senza-estensione).\n")
+		installaServizio(path, scrivibili)
 		return nil
 	}
 
@@ -282,10 +296,37 @@ func doInit(opts options) error {
 	fmt.Printf("Copiata  %s\n", esito.Destinazione)
 	fmt.Printf("Scritto  %s\n", esito.IniPath)
 	fmt.Printf("\nVerificato: php carica l'estensione.\n")
+
+	installaServizio(path, scrivibili)
+
 	if esito.Nota != "" {
-		fmt.Printf("Passo successivo: %s\n", esito.Nota)
+		fmt.Printf("\nPassi successivi:\n  %s\n", esito.Nota)
+		if install.UnitInstallata() {
+			fmt.Print("  systemctl start orma\n")
+		}
 	}
 	return nil
+}
+
+// installaServizio mette l'unit systemd, se c'e' systemd con cui parlare.
+// Senza, non e' un errore: nei container senza init si avvia a mano.
+func installaServizio(configurazione string, scrivibili []string) {
+	if !install.SystemdDisponibile() {
+		fmt.Print("\nsystemd non disponibile: il servizio non e' stato installato.\n" +
+			"Avvia il daemon a mano con \"orma start\".\n")
+		return
+	}
+
+	esito, err := install.Servizio(configurazione, scrivibili)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "\nServizio non installato: %v\n", err)
+		return
+	}
+
+	if esito.BinarioCopiato {
+		fmt.Printf("Copiato  %s\n", esito.Binario)
+	}
+	fmt.Printf("Scritto  %s (abilitato all'avvio)\n", esito.Unit)
 }
 
 // doAbilita accende o spegne la raccolta senza disinstallare nulla: utile per
@@ -366,6 +407,27 @@ func doExport(opts options) error {
 	return nil
 }
 
+// delegaSystemd inoltra il verbo a systemctl quando il servizio sta girando.
+// Restituisce false se il comando va gestito qui.
+func delegaSystemd(verbo string) (bool, error) {
+	azioni := map[string]string{
+		"stop": "stop", "restart": "restart", "reload": "reload", "status": "status",
+	}
+	azione, gestibile := azioni[verbo]
+	if !gestibile || !install.UnitAttiva() {
+		return false, nil
+	}
+
+	out, err := install.Systemctl(azione)
+	if out != "" {
+		fmt.Println(out)
+	}
+	if err != nil {
+		return true, fmt.Errorf("systemctl %s orma: %w", azione, err)
+	}
+	return true, nil
+}
+
 func generaToken() (string, error) {
 	grezzo := make([]byte, 24)
 	if _, err := rand.Read(grezzo); err != nil {
@@ -392,6 +454,14 @@ func doPurge(opts options) error {
 	fmt.Println("Rimozione in corso. Verranno cancellati i dati raccolti.")
 
 	var problemi []string
+
+	rimossiServizio, err := install.RimuoviServizio()
+	for _, r := range rimossiServizio {
+		fmt.Printf("  rimosso  %s\n", r)
+	}
+	if err != nil {
+		problemi = append(problemi, err.Error())
+	}
 
 	if !opts.senzaEstensione {
 		rimossi, err := install.Rimuovi(opts.phpBin)

@@ -39,13 +39,46 @@ sudo orma --init
 genera l'INI e **verifica che PHP la carichi davvero** prima di lasciarla installata. Se
 l'artefatto non corrisponde a quella build di PHP, viene rimosso e te lo dice.
 
+`--init` installa anche il **servizio systemd** e lo abilita all'avvio. Se il binario si
+trova in un posto da cui un servizio non dovrebbe partire — la home di root, una
+directory temporanea — viene copiato in `/usr/local/bin`: un `ExecStart` che punta a
+`/root/orma` funziona finché quel file non viene spostato, e poi il servizio non riparte
+più al boot senza che nessuno capisca perché.
+
 Su Ubuntu l'INI finisce in `mods-available`, quindi:
 
 ```bash
 sudo phpenmod orma
 sudo systemctl restart php8.5-fpm
-sudo orma start
+sudo systemctl start orma
 ```
+
+## Il servizio
+
+Con l'unit installata, i verbi passano da systemd: `orma stop`, `orma restart`,
+`orma reload` e `orma status` inoltrano a `systemctl`. Senza, un `orma restart` lascerebbe
+systemd a inseguire un processo che non c'è più e ne farebbe partire un secondo.
+
+```bash
+systemctl status orma
+journalctl -u orma -f        # gli allarmi finiscono qui
+systemctl restart orma
+```
+
+L'unit usa `Restart=on-failure`, non `always`: un `orma stop` voluto non deve essere
+annullato da systemd che lo rimette su. Usa `RuntimeDirectory` per la directory del
+socket, perché `/run` è tmpfs e senza sparirebbe a ogni riavvio della macchina, e
+`StateDirectory` per il database.
+
+Il daemon gira come root, perché deve poter assegnare il socket al gruppo di php-fpm ed
+è lo stesso modo in cui lo si lancia a mano durante le prove — così non si creano
+conflitti di proprietà sui file passando dall'uno all'altro. Le direttive di
+irrobustimento (`ProtectSystem=strict`, `ReadWritePaths` limitato, `NoNewPrivileges`,
+`RestrictAddressFamilies`) limitano cosa quel root può toccare. Un utente dedicato è il
+passo successivo.
+
+Nei container senza init `--init` salta l'installazione del servizio e lo dice: si avvia
+a mano con `orma start`.
 
 `--init` genera anche il token di accesso all'interfaccia e te lo stampa con l'URL
 pronto. L'interfaccia è su `127.0.0.1:8737`.
@@ -61,9 +94,9 @@ sudo orma --purge
 
 | | |
 |---|---|
-| `orma start\|stop\|reload\|restart\|status` | il servizio |
-| `orma --init` | configura, installa l'estensione, genera il token |
-| `orma --purge` | disinstalla tutto e cancella i dati |
+| `orma start\|stop\|reload\|restart\|status` | il servizio; con l'unit installata inoltrano a systemctl |
+| `orma --init` | configura, installa estensione e servizio, genera il token |
+| `orma --purge` | disinstalla tutto, servizio compreso, e cancella i dati |
 | `orma --enable` / `orma --disable` | sospende e riattiva la raccolta |
 | `orma --export <dir>` | genera le pagine come HTML statico |
 | `orma --check-config` | valida la configurazione |
@@ -290,6 +323,7 @@ make smoke        # prova end-to-end: PHP vero, socket, daemon, SQLite, pagine
 make asan         # ricompila sotto AddressSanitizer e cerca errori di memoria
 make overhead     # misura il costo dell'instrumentazione
 make wordpress    # php-fpm vero + WordPress + carico, con giro di controllo
+make systemd      # unit systemd provata con systemd come PID 1
 make daemon       # binario del daemon
 ```
 
