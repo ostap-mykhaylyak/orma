@@ -3,16 +3,51 @@
   <div class="tiles">
     <div class="tile"><div class="k">Transazione</div><div class="v" style="font-size:1rem">{{ .Traccia.Name }}</div></div>
     <div class="tile"><div class="k">Durata</div><div class="v">{{ ms .Traccia.DurationMS }}</div></div>
-    <div class="tile"><div class="k">Stato</div>
-      <div class="v {{ if .Traccia.HasError }}err{{ end }}">{{ if .Traccia.HTTPStatus }}{{ .Traccia.HTTPStatus }}{{ else }}&mdash;{{ end }}</div></div>
-    <div class="tile"><div class="k">Span</div><div class="v">{{ len .Traccia.Spans }}</div></div>
+    <div class="tile"><div class="k">Database</div><div class="v">{{ ms .Traccia.TempoQueryMS }}</div></div>
+    <div class="tile"><div class="k">Funzioni interne</div><div class="v">{{ ms .Traccia.ProfiloMS }}</div></div>
+    <div class="tile">
+      <div class="k">Stato</div>
+      <div class="v {{ if .Traccia.HasError }}err{{ end }}">{{ if .Traccia.HTTPStatus }}{{ .Traccia.HTTPStatus }}{{ else }}&mdash;{{ end }}</div>
+    </div>
     <div class="tile" title="chiamate di funzione utente, comprese quelle sotto soglia">
       <div class="k">Chiamate</div><div class="v">{{ num32 .Traccia.Chiamate }}</div>
     </div>
   </div>
 
+  {{ if .Traccia.Troncato }}
+  <div class="grafico" style="border-color: var(--err); margin-top:.75rem">
+    <h3 class="stato-attenzione">Waterfall incompleto</h3>
+    <div class="scala">
+      {{ num32 .Traccia.SpansDropped }} span non sono stati registrati: la richiesta ha
+      superato il tetto di {{ len .Traccia.Spans }}. Le somme e i tempi propri qui sotto
+      restano validi per cio' che c'&egrave;, ma qualcosa manca. Alza
+      <code>orma.function_ms</code> per registrare meno funzioni e vedere l'albero intero.
+    </div>
+  </div>
+  {{ end }}
+
+  {{ if .Rilievi }}
+  <h2>Da dove partire</h2>
+  <div class="rilievi">
+    {{ range .Rilievi }}
+    <div class="rilievo {{ .Tipo }}">
+      <div class="capo">
+        <span class="titolo">{{ .Titolo }}</span>
+        <span class="peso">{{ ms .MS }} &middot; {{ perc .QuotaPct }} della richiesta</span>
+      </div>
+      <div class="dett">{{ .Dettaglio }}</div>
+      {{ with .Azione }}<div class="azione">{{ . }}</div>{{ end }}
+    </div>
+    {{ end }}
+  </div>
+  <div class="legenda">
+    <span>Ordinati per tempo recuperabile. Le voci si sovrappongono: una query lenta
+    dentro uno span lento compare in entrambi.</span>
+  </div>
+  {{ end }}
+
   {{ if .Traccia.Profilo }}
-  <h2>Dove va il tempo dentro PHP</h2>
+  <h2>Funzioni interne</h2>
   <div class="scroll">
     <table>
       <thead>
@@ -31,26 +66,67 @@
     </table>
   </div>
   <div class="legenda">
-    <span>{{ ms .Traccia.ProfiloMS }} su {{ ms .Traccia.DurationMS }} sono attribuiti a
-    queste funzioni. Il resto sta in codice PHP non profilato, nelle query o in attesa.</span>
+    <span>Il tempo di ogni funzione &egrave; comprensivo di quelle chiamate dentro di
+    essa: una <code>md5</code> dentro una <code>preg_replace_callback</code> compare in
+    entrambe le righe, quindi la colonna pu&ograve; sommare a pi&ugrave; della durata.
+    Il totale attribuito conta invece solo le chiamate pi&ugrave; esterne, e non
+    supera mai la richiesta.</span>
+  </div>
+  {{ end }}
+
+  {{ if .Query }}
+  <h2>Query di questa richiesta</h2>
+  <div class="scroll">
+    <table>
+      <thead>
+        <tr><th>Statement</th><th>Esecuzioni</th><th>Tempo totale</th><th>Media</th><th>Massimo</th></tr>
+      </thead>
+      <tbody>
+        {{ range .Query }}
+        <tr>
+          <td class="sql">{{ .Statement }}</td>
+          <td class="n">
+            {{ .Chiamate }}{{ if .Ripetuta }} <span class="tag">ripetuta</span>{{ end }}
+          </td>
+          <td class="n">{{ ms .TotaleMS }}</td>
+          <td class="n">{{ ms .MediaMS }}</td>
+          <td class="n">{{ ms .MaxMS }}</td>
+        </tr>
+        {{ end }}
+      </tbody>
+    </table>
+  </div>
+  <div class="legenda">
+    <span>{{ ms .Traccia.TempoQueryMS }} in totale. Una query marcata
+    <span class="tag">ripetuta</span> viene eseguita molte volte nella stessa richiesta:
+    quasi sempre &egrave; un ciclo che carica un oggetto per volta.</span>
   </div>
   {{ end }}
 
   <h2>Waterfall</h2>
+  <div class="intervalli">
+    <a href="{{ .HrefSoglia 0 }}"  {{ if eq .Soglia 0.0 }}class="on"{{ end }}>tutto</a>
+    <a href="{{ .HrefSoglia 1 }}"  {{ if eq .Soglia 1.0 }}class="on"{{ end }}>&ge; 1 ms</a>
+    <a href="{{ .HrefSoglia 5 }}"  {{ if eq .Soglia 5.0 }}class="on"{{ end }}>&ge; 5 ms</a>
+    <a href="{{ .HrefSoglia 20 }}" {{ if eq .Soglia 20.0 }}class="on"{{ end }}>&ge; 20 ms</a>
+    <a href="{{ .HrefSoglia 50 }}" {{ if eq .Soglia 50.0 }}class="on"{{ end }}>&ge; 50 ms</a>
+  </div>
+
   <div class="scroll">
     {{ if .Righe }}
     <table class="wf">
       <thead>
         <tr>
-          <th>Span</th><th style="width:34%">Andamento</th><th>Inizio</th>
-          <th>Durata</th><th>Proprio</th><th>Chiamate</th>
+          <th>Span</th><th style="width:28%">Andamento</th><th>Inizio</th>
+          <th>Durata</th><th>Proprio</th><th>Interne</th><th>Chiamate</th>
         </tr>
       </thead>
       <tbody>
         {{ range .Righe }}
-        <tr {{ if .Span.Status }}class="errore"{{ else if .Sospetto }}class="sospetto"{{ end }}>
+        <tr {{ if .Span.Status }}class="errore"{{ else if .Ripetuto }}class="raccolto"{{ else if .Sospetto }}class="sospetto"{{ end }}>
           <td>
             <span class="etichetta" style="padding-left:{{ indent .Depth }}rem">{{ .Span.Name }}</span>
+            {{ if .Ripetuto }}<span class="conteggio">&times;{{ .Ripetuto }}</span>{{ end }}
             {{ with .Statement }}<span class="stmt">{{ . }}</span>{{ end }}
           </td>
           <td>
@@ -60,16 +136,17 @@
           </td>
           <td class="n">{{ offset .Span.OffsetNS }}</td>
           <td class="n">{{ ms .DurMS }}</td>
-          <td class="n" title="tempo non speso nei figli registrati">
+          <td class="n">
             {{ ms .PropriMS }}{{ if .Sospetto }} <span class="tag">qui</span>{{ end }}
           </td>
+          <td class="n">{{ if .InterneMS }}{{ ms .InterneMS }}{{ else }}&mdash;{{ end }}</td>
           <td class="n">{{ if .Span.Chiamate }}{{ num32 .Span.Chiamate }}{{ else }}&mdash;{{ end }}</td>
         </tr>
         {{ end }}
       </tbody>
     </table>
     {{ else }}
-    <div class="empty">Questo trace non contiene span.</div>
+    <div class="empty">Nessuno span sopra la soglia scelta.</div>
     {{ end }}
   </div>
 
@@ -79,11 +156,15 @@
     <span class="ext">chiamate esterne</span>
   </div>
   <div class="legenda">
-    <span><strong>Proprio</strong> &egrave; la durata meno quella dei figli registrati:
-    &egrave; il tempo speso davvero l&igrave;. Le righe marcate <span class="tag">qui</span>
-    sono quelle in cui il tempo si ferma, ed &egrave; da quelle che conviene partire.
-    <strong>Chiamate</strong> conta le funzioni eseguite dentro lo span, comprese quelle
-    troppo brevi per comparire: molte chiamate significano lavoro, poche significano attesa.</span>
+    <span><strong>Proprio</strong> &egrave; la durata meno quella dei figli elencati sotto:
+    &egrave; il tempo che si ferma su quella riga, e le righe marcate
+    <span class="tag">qui</span> sono quelle da cui partire. <strong>Interne</strong>
+    &egrave; quanta parte se ne va in funzioni di PHP come regex e serializzazione.
+    <strong>Chiamate</strong> conta le funzioni eseguite dentro, comprese quelle troppo
+    brevi per comparire: molte chiamate significano lavoro, poche significano attesa.
+    Le query identiche ripetute sono raccolte in una riga sola con
+    <span class="conteggio">&times;n</span>.
+    {{ if gt .Nascoste 0 }}<br>{{ .Nascoste }} righe sotto soglia non sono mostrate.{{ end }}</span>
   </div>
 
 {{ template "chiusura" . }}

@@ -12,13 +12,19 @@
     {{ if .Query }}
     <table>
       <thead>
-        <tr><th>Statement</th><th>Esecuzioni</th><th>Tempo totale</th><th>Media</th><th>Massimo</th><th>Errori</th></tr>
+        <tr>
+          <th>Statement</th><th>Esecuzioni</th><th>Per richiesta</th>
+          <th>Tempo totale</th><th>Media</th><th>Massimo</th><th>Errori</th>
+        </tr>
       </thead>
       <tbody>
         {{ range .Query }}
         <tr>
           <td class="sql">{{ .Statement }}</td>
           <td class="n">{{ num .Count }}</td>
+          <td class="n">
+            {{ perRich .PerRichiesta }}{{ if .Ripetuta }} <span class="tag">ripetuta</span>{{ end }}
+          </td>
           <td class="n">{{ seconds .TotalMS }}</td>
           <td class="n">{{ ms .AvgMS }}</td>
           <td class="n">{{ ms .MaxMS }}</td>
@@ -32,6 +38,12 @@
     {{ end }}
   </div>
 
+  <div class="legenda">
+    <span><strong>Per richiesta</strong> &egrave; il numero che smaschera un ciclo senza
+    aprire un trace: su {{ num .Richieste }} richieste, una query marcata
+    <span class="tag">ripetuta</span> viene eseguita molte volte in ognuna, e quasi sempre
+    significa che qualcosa carica un oggetto per volta invece che in blocco.</span>
+  </div>
   <div class="legenda">
     <span>I valori sono sostituiti da <code>?</code> dall'estensione, prima che la query lasci il processo PHP: i parametri non arrivano mai al daemon.</span>
   </div>

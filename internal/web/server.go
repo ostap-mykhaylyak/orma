@@ -46,9 +46,15 @@ type Opzioni struct {
 // New costruisce il server.
 func New(st *store.Store, log *slog.Logger, opts Opzioni) (*Server, error) {
 	funcs := template.FuncMap{
-		"ms":      func(v float64) string { return fmt.Sprintf("%.1f ms", v) },
-		"num":     func(v uint64) string { return strconv.FormatUint(v, 10) },
-		"num32":   func(v uint32) string { return strconv.FormatUint(uint64(v), 10) },
+		"ms":    func(v float64) string { return fmt.Sprintf("%.1f ms", v) },
+		"num":   func(v uint64) string { return strconv.FormatUint(v, 10) },
+		"num32": func(v uint32) string { return strconv.FormatUint(uint64(v), 10) },
+		"perRich": func(v float64) string {
+			if v >= 10 {
+				return strconv.FormatFloat(v, 'f', 0, 64)
+			}
+			return strconv.FormatFloat(v, 'f', 1, 64)
+		},
 		"perc":    func(v float64) string { return fmt.Sprintf("%.2f%%", v) },
 		"rate":    func(v float64) string { return fmt.Sprintf("%.1f/min", v) },
 		"seconds": func(v float64) string { return fmt.Sprintf("%.2f s", v/1000) },
@@ -59,10 +65,10 @@ func New(st *store.Store, log *slog.Logger, opts Opzioni) (*Server, error) {
 			}
 			return totale / float64(n)
 		},
-		"pct":     func(v float64) string { return strconv.FormatFloat(v, 'f', 3, 64) },
-		"offset":  func(ns uint64) string { return fmt.Sprintf("+%.1f ms", float64(ns)/1e6) },
-		"orario":  func(ts int64) string { return time.Unix(ts, 0).Format("15:04:05") },
-		"apdex":   func(v float64) string { return strconv.FormatFloat(v, 'f', 2, 64) },
+		"pct":    func(v float64) string { return strconv.FormatFloat(v, 'f', 3, 64) },
+		"offset": func(ns uint64) string { return fmt.Sprintf("+%.1f ms", float64(ns)/1e6) },
+		"orario": func(ts int64) string { return time.Unix(ts, 0).Format("15:04:05") },
+		"apdex":  func(v float64) string { return strconv.FormatFloat(v, 'f', 2, 64) },
 		// Il rientro del waterfall e' limitato: un albero profondo non deve
 		// spingere i nomi fuori dalla colonna.
 		"indent": func(depth int) string {
@@ -261,8 +267,9 @@ type datiTransazione struct {
 
 type datiDatabase struct {
 	comune
-	Totale riepilogo
-	Query  []store.SQLStat
+	Totale    riepilogo
+	Query     []store.SQLStat
+	Richieste uint64
 }
 
 type datiEsterne struct {
@@ -340,12 +347,23 @@ func (s *Server) costruisciDatabase(since int64, c comune) (datiDatabase, error)
 		return datiDatabase{}, fmt.Errorf("query lente: %w", err)
 	}
 
-	var totale riepilogo
-	for _, q := range query {
-		totale.Count += q.Count
-		totale.TotalMS += q.TotalMS
+	// Le esecuzioni per richiesta si ricavano dal numero di richieste servite
+	// nello stesso intervallo: senza il denominatore, un conteggio alto puo'
+	// voler dire un ciclo oppure solo tanto traffico.
+	riepilogoTot, err := s.store.Summary(since, s.apdexTMS)
+	if err != nil {
+		return datiDatabase{}, fmt.Errorf("riepilogo per il rapporto per richiesta: %w", err)
 	}
-	return datiDatabase{comune: c, Totale: totale, Query: query}, nil
+
+	var totale riepilogo
+	for i := range query {
+		totale.Count += query[i].Count
+		totale.TotalMS += query[i].TotalMS
+		if riepilogoTot.Requests > 0 {
+			query[i].PerRichiesta = float64(query[i].Count) / float64(riepilogoTot.Requests)
+		}
+	}
+	return datiDatabase{comune: c, Totale: totale, Query: query, Richieste: riepilogoTot.Requests}, nil
 }
 
 func (s *Server) costruisciEsterne(since int64, c comune) (datiEsterne, error) {
@@ -414,9 +432,9 @@ func (s *Server) handleExternals(w http.ResponseWriter, r *http.Request) {
 
 type datiErrori struct {
 	comune
-	Errori  []store.ErrStat
-	Fatali  uint64
-	Avvisi  uint64
+	Errori []store.ErrStat
+	Fatali uint64
+	Avvisi uint64
 }
 
 func (s *Server) costruisciErrori(since int64, c comune) (datiErrori, error) {
@@ -454,8 +472,17 @@ type datiTracce struct {
 
 type datiTraccia struct {
 	comune
-	Traccia *store.Trace
-	Righe   []store.Riga
+	Traccia  *store.Trace
+	Righe    []store.Riga
+	Nascoste int
+	Soglia   float64
+	Rilievi  []store.Rilievo
+	Query    []store.GruppoQuery
+}
+
+// HrefSoglia costruisce il collegamento per cambiare la soglia del waterfall.
+func (d datiTraccia) HrefSoglia(ms float64) string {
+	return fmt.Sprintf("?id=%d&minuti=%d&min=%g", d.Traccia.ID, d.Minuti, ms)
 }
 
 func (s *Server) costruisciTracce(since int64, c comune) (datiTracce, error) {
@@ -466,12 +493,22 @@ func (s *Server) costruisciTracce(since int64, c comune) (datiTracce, error) {
 	return datiTracce{comune: c, Tracce: tracce}, nil
 }
 
-func (s *Server) costruisciTraccia(id int64, c comune) (datiTraccia, error) {
+func (s *Server) costruisciTraccia(id int64, c comune, sogliaMS float64) (datiTraccia, error) {
 	traccia, err := s.store.Trace(id)
 	if err != nil {
 		return datiTraccia{}, err
 	}
-	return datiTraccia{comune: c, Traccia: traccia, Righe: traccia.Waterfall()}, nil
+
+	righe := traccia.Waterfall(sogliaMS)
+	return datiTraccia{
+		comune:   c,
+		Traccia:  traccia,
+		Righe:    righe,
+		Nascoste: len(traccia.Spans) - len(righe),
+		Soglia:   sogliaMS,
+		Rilievi:  traccia.Rilievi(),
+		Query:    traccia.RiepilogoQuery(),
+	}, nil
 }
 
 func (s *Server) handleTraces(w http.ResponseWriter, r *http.Request) {
@@ -494,7 +531,16 @@ func (s *Server) handleTrace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	dati, err := s.costruisciTraccia(id, newComune("Trace", "tracce", minuti))
+	// Soglia predefinita a 1 ms: un trace di mille righe e' illeggibile, e le
+	// righe sotto il millisecondo non hanno mai spiegato un rallentamento.
+	soglia := 1.0
+	if v := r.URL.Query().Get("min"); v != "" {
+		if n, err := strconv.ParseFloat(v, 64); err == nil && n >= 0 {
+			soglia = n
+		}
+	}
+
+	dati, err := s.costruisciTraccia(id, newComune("Trace", "tracce", minuti), soglia)
 	if err != nil {
 		http.Error(w, "trace non trovato", http.StatusNotFound)
 		return

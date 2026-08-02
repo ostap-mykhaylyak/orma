@@ -19,8 +19,9 @@ import (
 // Version e' la versione del protocollo supportata. La 2 aggiunge i warning e
 // gli eventi; la 3 i frame che l'agent non ha consegnato; la 4 separa quei
 // frame per causa e aggiunge il conteggio delle chiamate e il profilo delle
-// funzioni interne.
-const Version = 4
+// funzioni interne; la 5 attribuisce il tempo delle funzioni interne al
+// singolo span, invece che alla sola transazione.
+const Version = 5
 
 // Limiti di sanita': un mittente corretto non li raggiunge mai.
 const (
@@ -118,7 +119,11 @@ type Span struct {
 	// Chiamate avvenute dentro questo span, annidate comprese. Distingue uno
 	// span lento perche' fa moltissimo da uno lento perche' aspetta.
 	Chiamate uint32
-	Attrs    []Attr
+	// InterneNano e' il tempo passato in funzioni interne profilate mentre lo
+	// span era aperto: dice se il tempo proprio e' lavoro PHP o costo di
+	// regex, serializzazione e filesystem.
+	InterneNano uint64
+	Attrs       []Attr
 }
 
 // Transaction e' una richiesta completa: lo span radice piu' i metadati di
@@ -431,6 +436,7 @@ func decodeSpan(r *reader, lookup func(uint32) string) (Span, error) {
 	s.DurationNano = r.u64()
 	s.Status = r.u8()
 	s.Chiamate = r.u32()
+	s.InterneNano = r.u64()
 
 	attrCount := r.u16()
 	if r.err != nil {

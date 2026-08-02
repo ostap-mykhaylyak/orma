@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"sort"
 )
 
 // TraceSpan e' uno span dentro un trace salvato. I nomi dei campi JSON sono
@@ -12,15 +13,16 @@ import (
 // L'inizio e' relativo all'inizio della transazione: cosi' il waterfall si
 // disegna senza sottrazioni, e il payload non dipende dall'ora assoluta.
 type TraceSpan struct {
-	ID       string            `json:"i"`
-	Parent   string            `json:"p,omitempty"`
-	Name     string            `json:"n"`
-	Kind     uint8             `json:"k"`
-	OffsetNS uint64            `json:"o"`
-	DurNS    uint64            `json:"d"`
-	Status   uint8             `json:"s,omitempty"`
-	Chiamate uint32            `json:"c,omitempty"`
-	Attrs    map[string]string `json:"a,omitempty"`
+	ID        string            `json:"i"`
+	Parent    string            `json:"p,omitempty"`
+	Name      string            `json:"n"`
+	Kind      uint8             `json:"k"`
+	OffsetNS  uint64            `json:"o"`
+	DurNS     uint64            `json:"d"`
+	Status    uint8             `json:"s,omitempty"`
+	Chiamate  uint32            `json:"c,omitempty"`
+	InterneNS uint64            `json:"in,omitempty"`
+	Attrs     map[string]string `json:"a,omitempty"`
 }
 
 // TraceProfilo e' il costo di una funzione interna dentro un trace.
@@ -52,12 +54,31 @@ type Trace struct {
 	HTTPStatus uint16
 	HasError   bool
 	Chiamate   uint32
-	Spans      []TraceSpan
-	Profilo    []TraceProfilo
+	// SpansDropped e' quanti span non sono entrati nel tetto. Un waterfall
+	// troncato che non dichiara di esserlo fa cercare a lungo qualcosa che
+	// non c'e'.
+	SpansDropped uint32
+	Spans        []TraceSpan
+	Profilo      []TraceProfilo
 }
 
-// ProfiloMS e' il tempo totale attribuito alle funzioni interne profilate.
+// Troncato indica che il waterfall non e' completo.
+func (t Trace) Troncato() bool {
+	return t.SpansDropped > 0
+}
+
+// ProfiloMS e' il tempo attribuito alle funzioni interne, contando solo le
+// chiamate piu' esterne.
+//
+// Non e' la somma della tabella per funzione: li' il tempo e' inclusivo, e una
+// md5 dentro una preg_replace_callback comparirebbe due volte, portando il
+// totale sopra la durata della richiesta. Il valore giusto arriva dallo span
+// radice, dove l'agent accumula solo le chiamate non annidate.
 func (t Trace) ProfiloMS() float64 {
+	if len(t.Spans) > 0 && t.Spans[0].Parent == "" {
+		return float64(t.Spans[0].InterneNS) / 1e6
+	}
+
 	var totale float64
 	for _, p := range t.Profilo {
 		totale += p.MS()
@@ -83,6 +104,24 @@ type Riga struct {
 	// Figli registrati, per capire se il tempo proprio e' lavoro vero o solo
 	// chiamate rimaste sotto soglia.
 	Figli int
+	// Ripetuto e' il numero di esecuzioni identiche raccolte in questa riga:
+	// cento query uguali diventano una riga con cento, invece di cento righe.
+	Ripetuto int
+}
+
+// InterneMS e' il tempo passato in funzioni interne dentro questo span.
+func (r Riga) InterneMS() float64 {
+	return float64(r.Span.InterneNS) / 1e6
+}
+
+// PropriInterneMS e' quanta parte del tempo proprio se ne va in funzioni
+// interne: se e' quasi tutto, il codice non sta lavorando, sta chiamando.
+func (r Riga) PropriInterneMS() float64 {
+	interne := r.InterneMS()
+	if interne > r.PropriMS() {
+		return r.PropriMS()
+	}
+	return interne
 }
 
 // DurMS e' la durata dello span in millisecondi.
@@ -129,7 +168,14 @@ func (r Riga) Statement() string {
 //
 // Uno span il cui genitore non e' presente viene appeso alla radice invece di
 // sparire: puo' succedere se il tetto degli span ha troncato il genitore.
-func (t Trace) Waterfall() []Riga {
+//
+// Fa due cose per rendere leggibile un trace di mille righe:
+//
+//   - raccoglie in una riga sola le query identiche ripetute sotto lo stesso
+//     genitore, che sono la firma di un N+1 e da sole riempiono il waterfall;
+//   - nasconde le righe sotto sogliaMS, tenendo pero' quelle che hanno un
+//     discendente visibile, altrimenti si spezzerebbe l'albero.
+func (t Trace) Waterfall(sogliaMS float64) []Riga {
 	if len(t.Spans) == 0 {
 		return nil
 	}
@@ -158,25 +204,29 @@ func (t Trace) Waterfall() []Riga {
 		total = 1
 	}
 
-	var out []Riga
-	var visit func(span TraceSpan, depth int)
-	visit = func(span TraceSpan, depth int) {
-		width := float64(span.DurNS) / total * 100
+	geometria := func(offsetNS, durNS uint64) (offset, width float64) {
+		width = float64(durNS) / total * 100
 		if width < 0.4 {
 			width = 0.4 // altrimenti gli span brevissimi diventano invisibili
 		}
 		if width > 100 {
 			width = 100
 		}
-		offset := float64(span.OffsetNS) / total * 100
+		offset = float64(offsetNS) / total * 100
 		if offset+width > 100 {
 			offset = 100 - width
 		}
 		if offset < 0 {
 			offset = 0
 		}
+		return offset, width
+	}
 
+	var out []Riga
+	var visit func(span TraceSpan, depth int)
+	visit = func(span TraceSpan, depth int) {
 		kids := children[span.ID]
+		sort.SliceStable(kids, func(i, j int) bool { return kids[i].OffsetNS < kids[j].OffsetNS })
 
 		var figliNS uint64
 		for _, kid := range kids {
@@ -187,25 +237,99 @@ func (t Trace) Waterfall() []Riga {
 			propri = span.DurNS - figliNS
 		}
 
+		offset, width := geometria(span.OffsetNS, span.DurNS)
 		out = append(out, Riga{
 			Span: span, Depth: depth, OffsetPct: offset, WidthPct: width,
 			PropriNS: propri, Figli: len(kids),
 		})
 
-		for i := 0; i < len(kids); i++ {
-			for j := i + 1; j < len(kids); j++ {
-				if kids[j].OffsetNS < kids[i].OffsetNS {
-					kids[i], kids[j] = kids[j], kids[i]
-				}
+		// Quante volte ricorre ogni query fra i figli diretti.
+		ricorrenze := make(map[string]int)
+		for _, kid := range kids {
+			if stmt := statementDi(kid); stmt != "" {
+				ricorrenze[stmt]++
 			}
 		}
+		emesse := make(map[string]bool)
+
 		for _, kid := range kids {
+			stmt := statementDi(kid)
+			if stmt != "" && ricorrenze[stmt] >= 3 {
+				if emesse[stmt] {
+					continue
+				}
+				emesse[stmt] = true
+
+				var totaleNS, maxNS uint64
+				primo := kid
+				for _, altro := range kids {
+					if statementDi(altro) != stmt {
+						continue
+					}
+					totaleNS += altro.DurNS
+					if altro.DurNS > maxNS {
+						maxNS = altro.DurNS
+					}
+				}
+
+				raccolto := primo
+				raccolto.DurNS = totaleNS
+				o, w := geometria(primo.OffsetNS, maxNS)
+				out = append(out, Riga{
+					Span: raccolto, Depth: depth + 1, OffsetPct: o, WidthPct: w,
+					PropriNS: totaleNS, Ripetuto: ricorrenze[stmt],
+				})
+				continue
+			}
 			visit(kid, depth+1)
 		}
 	}
 
 	for _, root := range roots {
 		visit(root, 0)
+	}
+
+	return filtraPerDurata(out, sogliaMS)
+}
+
+// filtraPerDurata nasconde le righe brevi, conservando quelle che portano a
+// una riga visibile: nascondere un genitore lascerebbe i figli senza contesto.
+func filtraPerDurata(righe []Riga, sogliaMS float64) []Riga {
+	if sogliaMS <= 0 || len(righe) == 0 {
+		return righe
+	}
+	soglia := uint64(sogliaMS * 1e6)
+
+	maxDepth := 0
+	for _, r := range righe {
+		if r.Depth > maxDepth {
+			maxDepth = r.Depth
+		}
+	}
+
+	tieni := make([]bool, len(righe))
+	// discendenti[d] indica se sotto la profondita' d c'e' qualcosa da tenere.
+	discendenti := make([]bool, maxDepth+2)
+
+	// A ritroso: quando si incontra una riga, i suoi discendenti sono gia'
+	// stati esaminati.
+	for i := len(righe) - 1; i >= 0; i-- {
+		d := righe[i].Depth
+		tieni[i] = righe[i].Depth == 0 || righe[i].Span.DurNS >= soglia || discendenti[d+1]
+
+		for k := d + 1; k <= maxDepth+1; k++ {
+			discendenti[k] = false
+		}
+		if tieni[i] && d > 0 {
+			discendenti[d] = true
+		}
+	}
+
+	out := make([]Riga, 0, len(righe))
+	for i, r := range righe {
+		if tieni[i] {
+			out = append(out, r)
+		}
 	}
 	return out
 }
@@ -221,6 +345,7 @@ CREATE TABLE IF NOT EXISTS traces (
 	http_status INTEGER NOT NULL,
 	has_error   INTEGER NOT NULL,
 	chiamate    INTEGER NOT NULL DEFAULT 0,
+	span_persi  INTEGER NOT NULL DEFAULT 0,
 	-- TEXT e non BLOB: le funzioni json_* di SQLite lavorano sul testo.
 	spans       TEXT    NOT NULL,
 	profilo     TEXT    NOT NULL DEFAULT '[]'
@@ -281,15 +406,15 @@ func (s *Store) Trace(id int64) (*Trace, error) {
 	var payload []byte
 
 	var profilo []byte
-	var chiamate int64
+	var chiamate, spanPersi int64
 
 	err := s.db.QueryRow(
 		`SELECT t.id, a.name, t.txn_name, t.kind, t.ts, t.duration_ns,
-		        t.http_status, t.has_error, t.chiamate, t.spans, t.profilo
+		        t.http_status, t.has_error, t.chiamate, t.span_persi, t.spans, t.profilo
 		   FROM traces t JOIN apps a ON a.id = t.app_id
 		  WHERE t.id = ?`, id).
 		Scan(&t.ID, &t.App, &t.Name, &t.Kind, &t.TS, &durNS, &status, &hasError,
-			&chiamate, &payload, &profilo)
+			&chiamate, &spanPersi, &payload, &profilo)
 	if err != nil {
 		return nil, err
 	}
@@ -298,6 +423,7 @@ func (s *Store) Trace(id int64) (*Trace, error) {
 	t.HTTPStatus = uint16(status)
 	t.HasError = hasError != 0
 	t.Chiamate = uint32(chiamate)
+	t.SpansDropped = uint32(spanPersi)
 
 	if err := json.Unmarshal(payload, &t.Spans); err != nil {
 		return nil, fmt.Errorf("payload del trace %d illeggibile: %w", id, err)
@@ -325,10 +451,11 @@ func writeTraces(tx *sql.Tx, appIDs map[string]int64, traces []*Trace) error {
 		}
 		if _, err := tx.Exec(
 			`INSERT INTO traces
-			 (app_id, ts, txn_name, kind, duration_ns, http_status, has_error, chiamate, spans, profilo)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 (app_id, ts, txn_name, kind, duration_ns, http_status, has_error,
+			  chiamate, span_persi, spans, profilo)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			appIDs[t.App], t.TS, t.Name, t.Kind, int64(t.DurationNS),
-			int(t.HTTPStatus), hasError, int64(t.Chiamate),
+			int(t.HTTPStatus), hasError, int64(t.Chiamate), int64(t.SpansDropped),
 			string(payload), string(profilo)); err != nil {
 			return err
 		}

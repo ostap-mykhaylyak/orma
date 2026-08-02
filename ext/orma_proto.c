@@ -284,6 +284,7 @@ static bool orma_emit_children(orma_buf *out, orma_strtab *tab, const orma_txn *
 		if (!orma_put_u64(out, span->duration_nano)) return false;
 		if (!orma_put_u8(out, span->status)) return false;
 		if (!orma_put_u32(out, span->chiamate)) return false;
+		if (!orma_put_u64(out, span->interne_nano)) return false;
 		if (!orma_put_u16(out, span->attr_count)) return false;
 
 		for (uint8_t a = 0; a < span->attr_count; a++) {
@@ -384,6 +385,7 @@ bool orma_proto_encode(const orma_txn *txn, orma_buf *out)
 	if (!orma_put_u64(out, txn->duration_nano)) return false;
 	if (!orma_put_u8(out, txn->errors > 0 ? ORMA_STATUS_ERROR : ORMA_STATUS_OK)) return false;
 	if (!orma_put_u32(out, txn->chiamate > UINT32_MAX ? UINT32_MAX : (uint32_t)txn->chiamate)) return false;
+	if (!orma_put_u64(out, txn->profilo_nano)) return false;
 
 	uint16_t attr_count = (txn->background ? 1 : 2) + (uint16_t)txn->custom_count;
 	if (!orma_put_u16(out, attr_count)) return false;

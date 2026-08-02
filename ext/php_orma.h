@@ -17,7 +17,7 @@ extern zend_module_entry orma_module_entry;
  * protocol.Version nel daemon. Alzata a 2 dal M4, che aggiunge la sezione
  * degli errori in coda al frame: un daemon vecchio rifiuta il frame con un
  * messaggio chiaro invece di interpretarlo male. */
-#define ORMA_PROTOCOL_VERSION 4
+#define ORMA_PROTOCOL_VERSION 5
 
 /* Errori conservati per transazione. Oltre, si contano soltanto: cento
  * warning identici non aggiungono informazione. */
@@ -143,6 +143,10 @@ typedef struct _orma_span {
 	 * quelle rimaste sotto soglia e quindi mai emesse. Distingue "lento
 	 * perche' fa un milione di cose" da "lento perche' aspetta". */
 	uint32_t  chiamate;
+	/* Tempo passato dentro funzioni interne profilate mentre questo span era
+	 * aperto. Senza, sapere che una richiesta spende il 45% in
+	 * preg_replace_callback non dice ancora dove, e resta da dedurlo. */
+	uint64_t  interne_nano;
 	uint32_t  name_off;
 	uint32_t  name_len;
 	uint8_t   kind;
@@ -224,6 +228,16 @@ typedef struct _orma_txn {
 
 	/* Chiamate di funzione utente in tutta la richiesta. */
 	uint64_t chiamate;
+	/* Tempo accumulato nelle funzioni interne profilate. Un contatore solo:
+	 * la differenza fra ingresso e uscita di un frame da' il tempo interno di
+	 * quello span, in tempo costante e senza orologi aggiuntivi. */
+	uint64_t profilo_nano;
+	/* Profondita' di annidamento fra funzioni profilate. Una md5 chiamata
+	 * dentro una preg_replace_callback verrebbe contata due volte nel totale,
+	 * e la somma supererebbe la durata della richiesta: nel totale entra solo
+	 * la chiamata piu' esterna. Il conteggio per funzione resta inclusivo,
+	 * perche' e' quello che serve a sapere quanto costa quella funzione. */
+	uint32_t profilo_profondita;
 
 	orma_profilo profilo[ORMA_PROF_TOTALE];
 } orma_txn;

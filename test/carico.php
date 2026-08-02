@@ -72,16 +72,29 @@ final class Renderizzatore
         ])), true);
 
         $fuori = $contenuto;
-        for ($giro = 0; $giro < 300; $giro++) {
+        for ($giro = 0; $giro < 2500; $giro++) {
             $fuori = preg_replace_callback(
                 '/\[(\w+)\s+([^\]]*)\]/',
                 static fn (array $c): string => strtoupper($c[1]) . ':' . md5($c[2]),
-                $fuori
+                $contenuto
             );
             $fuori .= ' ' . serialize($dati[$giro % 400]);
         }
         return $fuori;
     }
+}
+
+// La firma di un N+1: una query per riga dentro un ciclo, invece di una sola
+// query che carica tutto.
+function caricaUnoPerVolta(PDO $pdo): int
+{
+    $totale = 0;
+    for ($id = 1; $id <= 60; $id++) {
+        $st = $pdo->prepare('SELECT email FROM utenti WHERE id = ?');
+        $st->execute([$id % 2 + 1]);
+        $totale += count($st->fetchAll());
+    }
+    return $totale;
 }
 
 function chiamaEsterni(): void
@@ -106,8 +119,9 @@ $st = $pdo->prepare('SELECT email FROM utenti WHERE id = ?');
 $st->execute([1]);
 
 if (isset($_GET['lento'])) {
+    caricaUnoPerVolta($pdo);
     $r = new Renderizzatore();
-    $r->renderizza(str_repeat('[shortcode attributo="valore"] testo ', 40));
+    $r->renderizza(str_repeat('[shortcode attributo="valore"] testo ', 120));
 }
 
 if (isset($_GET['avvisi'])) {

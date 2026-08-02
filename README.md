@@ -120,9 +120,36 @@ possa non caricarsi.
 
 ### Capire perché è lento
 
-Un waterfall da solo dice *dove* il tempo si accumula, non *perché*. Un metodo che dura
-cinque secondi con sotto un figlio che ne dura cinque non aggiunge niente. Tre cose
-chiudono l'indagine:
+Aprire un trace da mille righe e cercare a occhio dove sta il problema è lavoro
+meccanico. La pagina di un trace comincia perciò con **«Da dove partire»**: le
+osservazioni già fatte, ordinate per tempo recuperabile.
+
+```
+preg_replace_callback costa 5778 ms              5778.0 ms · 45,51% della richiesta
+12874 chiamate da 0,45 ms l'una
+Espressioni regolari su testi grossi, ripetute molte volte. Su WordPress questa
+firma e' quasi sempre do_shortcode() dentro un ciclo.
+
+La stessa query eseguita 104 volte                 512.0 ms · 4,03% della richiesta
+512 ms in totale, 4,9 ms l'una — SELECT * FROM wp_posts WHERE ID = ? LIMIT ?
+Sembra un ciclo che carica un oggetto per volta. Si risolve caricando in blocco.
+```
+
+Le regole riconoscono funzioni interne che dominano, query ripetute (il sospetto di
+N+1), query singole lente, span che trattengono molto tempo proprio, e il caso in cui
+un tratto di codice non sta lavorando ma **aspettando**.
+
+Sotto ci sono tre tabelle e un waterfall:
+
+**Il tempo proprio.** Ogni span mostra la durata meno quella dei figli registrati. Le
+righe dove il tempo si ferma davvero sono marcate: sono quelle da cui partire.
+
+**Il conteggio delle chiamate.** Quante funzioni sono state eseguite dentro uno span,
+comprese quelle troppo brevi per comparire. Molte chiamate significano lavoro, poche
+significano attesa — due problemi con due rimedi opposti.
+
+**Il tempo in funzioni interne, per span.** Non solo quanto costa `preg_replace_callback`
+in tutta la richiesta, ma dentro quale metodo.
 
 **Il tempo proprio.** Ogni span mostra la durata meno quella dei figli registrati. Le
 righe dove il tempo si ferma davvero sono marcate: sono quelle da cui partire.
@@ -143,6 +170,27 @@ file_get_contents       59 chiamate
 ```
 
 Si disattiva con `orma.profile_internals=0`.
+
+Il tempo di ogni funzione è **comprensivo** di quelle chiamate dentro di essa, quindi la
+colonna può sommare a più della durata: una `md5` dentro una `preg_replace_callback`
+compare in entrambe le righe. Il totale attribuito conta invece solo le chiamate più
+esterne, e non supera mai la richiesta.
+
+### Leggere un waterfall lungo
+
+Tre accorgimenti, perché mille righe non si guardano:
+
+- le **query identiche ripetute** sotto lo stesso genitore diventano una riga sola con
+  `×104` — sono la firma di un N+1 e da sole riempiono il waterfall;
+- si filtra per durata (`≥ 1 ms` di default, fino a `≥ 50 ms`), tenendo le righe che
+  portano a una visibile perché l'albero non si spezzi;
+- il **riepilogo query** raggruppa per forma, così si vede subito cosa gira cento volte.
+
+Se la richiesta ha superato il tetto di 2000 span, la pagina lo **dichiara**: un
+waterfall troncato che non lo dice fa cercare a lungo qualcosa che non c'è.
+
+Sulla pagina Database la colonna **per richiesta** smaschera un ciclo senza aprire un
+trace: se una query viene eseguita 104 volte in ogni richiesta, non è il traffico.
 
 ## Configurazione
 

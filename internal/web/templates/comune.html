@@ -85,6 +85,26 @@
   .stato-ok { color: var(--db); }
   .stato-attenzione { color: var(--err); }
 
+  /* Rilievi: l'analisi gia' fatta, in cima. */
+  .rilievi { display: grid; gap: .6rem; margin-top: .75rem; }
+  .rilievo { background: var(--card); border: 1px solid var(--line);
+             border-left: 3px solid var(--accent); border-radius: 8px; padding: .7rem .9rem; }
+  .rilievo.ripetizione { border-left-color: var(--db); }
+  .rilievo.query { border-left-color: var(--db); }
+  .rilievo.attesa { border-left-color: var(--ext); }
+  .rilievo .capo { display: flex; justify-content: space-between; gap: 1rem; align-items: baseline; }
+  .rilievo .titolo { font-weight: 600; font-size: .92rem; }
+  .rilievo .peso { font-variant-numeric: tabular-nums; color: var(--muted);
+                   font-size: .82rem; white-space: nowrap; }
+  .rilievo .dett { color: var(--muted); font-size: .82rem; margin-top: .25rem;
+                   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+                   word-break: break-word; }
+  .rilievo .azione { font-size: .82rem; margin-top: .35rem; }
+  .wf tr.raccolto .etichetta { opacity: .9; }
+  .conteggio { display: inline-block; font-size: .7rem; font-weight: 600;
+               color: var(--bg); background: var(--db); border-radius: 4px;
+               padding: 0 .35rem; margin-left: .4rem; }
+
   /* Waterfall */
   .wf td { vertical-align: middle; }
   .wf .etichetta { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .8rem; }

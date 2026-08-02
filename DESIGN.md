@@ -406,6 +406,29 @@ e 1409 `preg_match` per richiesta. Costa due letture di orologio per chiamata de
 funzioni in elenco; misurato su WordPress, l'overhead resta dentro l'intervallo già
 osservato senza profilo.
 
+### L'analisi la fa il programma
+
+Le tre aggiunte sopra danno i dati; leggerli resta lavoro meccanico. Guardare quale
+funzione interna domina, contare le query ripetute, cercare gli span con molto tempo
+proprio: sono tutte cose che si fanno con una regola, e le regole le esegue il computer.
+
+Da qui i **rilievi**: la pagina di un trace comincia con le osservazioni già fatte,
+ordinate per tempo recuperabile, ognuna con il perché e cosa farci. Le soglie sono
+relative alla durata della richiesta e non assolute — su una da dodici secondi cento
+millisecondi sono rumore, su una da duecento sono un terzo del problema.
+
+Un trace da mille righe però non si guarda comunque. Tre accorgimenti:
+
+- le query identiche ripetute sotto lo stesso genitore si raccolgono in una riga con
+  `×n`, perché sono la firma di un N+1 e da sole riempiono il waterfall;
+- il filtro per durata nasconde le righe brevi **tenendo quelle che portano a una
+  visibile**: nascondere un genitore lascerebbe i figli senza contesto;
+- il riepilogo delle query raggruppa per forma.
+
+E se il tetto degli span ha troncato la raccolta, la pagina lo dichiara. È lo stesso
+principio dell'auto-osservazione: un waterfall incompleto che non dice di esserlo fa
+cercare a lungo qualcosa che non c'è.
+
 ### Auto-osservazione
 
 Un APM che non sa dire se sta perdendo dati **mente per omissione**: se il socket satura

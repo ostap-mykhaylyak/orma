@@ -22,7 +22,7 @@ import (
 // schemaVersion cambia a ogni modifica incompatibile delle tabelle. Prima
 // della 1.0 le tabelle vengono ricreate invece di essere migrate: i dati di
 // telemetria sono rimpiazzabili, il codice di migrazione no.
-const schemaVersion = 6
+const schemaVersion = 7
 
 // Categorie di metrica.
 const (
@@ -687,6 +687,15 @@ type SQLStat struct {
 	TotalMS   float64
 	AvgMS     float64
 	MaxMS     float64
+	// PerRichiesta e' quante volte questa query viene eseguita in una singola
+	// richiesta. E' il numero che smaschera un N+1 senza aprire un trace: se
+	// vale cento, da qualche parte c'e' un ciclo.
+	PerRichiesta float64
+}
+
+// Ripetuta segnala il sospetto di un ciclo che interroga una riga per volta.
+func (s SQLStat) Ripetuta() bool {
+	return s.PerRichiesta >= 8
 }
 
 // SlowSQL restituisce le query aggregate per forma, ordinate per tempo totale.

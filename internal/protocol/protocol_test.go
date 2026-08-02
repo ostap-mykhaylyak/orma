@@ -11,7 +11,7 @@ import (
 // anche avendo questi test.
 type frameBuilder struct{ b []byte }
 
-func (f *frameBuilder) u8(v uint8)  { f.b = append(f.b, v) }
+func (f *frameBuilder) u8(v uint8)   { f.b = append(f.b, v) }
 func (f *frameBuilder) u16(v uint16) { f.b = binary.LittleEndian.AppendUint16(f.b, v) }
 func (f *frameBuilder) u32(v uint32) { f.b = binary.LittleEndian.AppendUint32(f.b, v) }
 func (f *frameBuilder) u64(v uint64) { f.b = binary.LittleEndian.AppendUint64(f.b, v) }
@@ -38,19 +38,19 @@ func validFrame() []byte {
 	f.u32(2) // host
 	f.u32(3) // nome
 	f.u32(4242)
-	f.u8(0)   // non background
+	f.u8(0) // non background
 	f.u16(200)
 	f.u64(1700000000000000000)
 	f.u64(1500000) // 1.5 ms
 	f.u64(2097152)
 	f.u64(1000)
 	f.u64(2000)
-	f.u32(0) // errori
-	f.u32(0) // warning
-	f.u32(0) // span scartati
-	f.u32(1) // persi: connessione
-	f.u32(2) // persi: timeout
-	f.u32(0) // persi: scrittura
+	f.u32(0)       // errori
+	f.u32(0)       // warning
+	f.u32(0)       // span scartati
+	f.u32(1)       // persi: connessione
+	f.u32(2)       // persi: timeout
+	f.u32(0)       // persi: scrittura
 	f.u64(4200) // chiamate di funzione
 
 	f.u32(1) // uno span
@@ -62,7 +62,8 @@ func validFrame() []byte {
 	f.u64(1700000000000000000)
 	f.u64(1500000)
 	f.u8(0)
-	f.u32(4200) // chiamate dentro lo span
+	f.u32(4200)    // chiamate dentro lo span
+	f.u64(900_000) // tempo in funzioni interne
 	f.u16(2)
 	f.u32(4)
 	f.u8(uint8(AttrString))
@@ -130,6 +131,9 @@ func TestDecodeValido(t *testing.T) {
 	}
 	if txn.Chiamate != 4200 || span.Chiamate != 4200 {
 		t.Errorf("chiamate errate: transazione %d, span %d", txn.Chiamate, span.Chiamate)
+	}
+	if span.InterneNano != 900_000 {
+		t.Errorf("tempo nelle funzioni interne: %d, atteso 900000", span.InterneNano)
 	}
 
 	if len(txn.Profilo) != 1 {
@@ -200,7 +204,7 @@ func TestDecodeIndiceStringaFuoriTabella(t *testing.T) {
 	f.u8(Version)
 	f.u8(0)
 	f.u32(1)
-	f.u16(0) // una sola stringa, vuota
+	f.u16(0)  // una sola stringa, vuota
 	f.u32(99) // app_idx fuori tabella
 	f.u32(0)
 	f.u32(0)

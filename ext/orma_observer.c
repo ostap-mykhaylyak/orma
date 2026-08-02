@@ -44,6 +44,8 @@ typedef struct _orma_frame {
 	 * da' quante chiamate sono avvenute dentro, comprese quelle rimaste sotto
 	 * soglia e le annidate, in tempo costante. */
 	uint64_t chiamate_inizio;
+	/* Come chiamate_inizio, ma per il tempo nelle funzioni interne. */
+	uint64_t interne_inizio;
 	bool     tracked;
 } orma_frame;
 
@@ -170,6 +172,7 @@ static void orma_observer_begin(zend_execute_data *execute_data)
 	 * chiamata di funzione osservata. */
 	f->start_monotonic_nano = orma_now_monotonic_nano();
 	f->chiamate_inizio = ORMA_G(txn).chiamate;
+	f->interne_inizio = ORMA_G(txn).profilo_nano;
 
 	ORMA_G(depth)++;
 }
@@ -227,11 +230,13 @@ static void orma_observer_end(zend_execute_data *execute_data, zval *return_valu
 		chiamate = UINT32_MAX;
 	}
 
+	uint64_t interne = ORMA_G(txn).profilo_nano - f->interne_inizio;
+
 	orma_span_record(name, name_len, ORMA_SPAN_INTERNAL,
 	                 f->span_id, f->parent_id,
 	                 start_unix, duration,
 	                 EG(exception) != NULL ? ORMA_STATUS_ERROR : ORMA_STATUS_OK,
-	                 (uint32_t)chiamate);
+	                 (uint32_t)chiamate, interne);
 }
 
 static zend_observer_fcall_handlers orma_observer_init(zend_execute_data *execute_data)

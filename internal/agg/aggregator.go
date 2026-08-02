@@ -270,16 +270,17 @@ func (a *Aggregator) keepTrace(txn *protocol.Transaction, w *store.Window) bool 
 
 func buildTrace(txn *protocol.Transaction, app, name, kind string, ts int64) *store.Trace {
 	t := &store.Trace{
-		App:        app,
-		Name:       name,
-		Kind:       kind,
-		TS:         ts,
-		DurationNS: txn.DurationNano,
-		HTTPStatus: txn.HTTPStatus,
-		HasError:   isError(txn),
-		Chiamate:   txn.Chiamate,
-		Spans:      make([]store.TraceSpan, 0, len(txn.Spans)),
-		Profilo:    make([]store.TraceProfilo, 0, len(txn.Profilo)),
+		App:          app,
+		Name:         name,
+		Kind:         kind,
+		TS:           ts,
+		DurationNS:   txn.DurationNano,
+		HTTPStatus:   txn.HTTPStatus,
+		HasError:     isError(txn),
+		Chiamate:     txn.Chiamate,
+		SpansDropped: txn.SpansDropped,
+		Spans:        make([]store.TraceSpan, 0, len(txn.Spans)),
+		Profilo:      make([]store.TraceProfilo, 0, len(txn.Profilo)),
 	}
 
 	for _, voce := range txn.Profilo {
@@ -301,13 +302,14 @@ func buildTrace(txn *protocol.Transaction, app, name, kind string, ts int64) *st
 		}
 
 		ts := store.TraceSpan{
-			ID:       hex.EncodeToString(span.SpanID[:]),
-			Name:     span.Name,
-			Kind:     uint8(span.Kind),
-			OffsetNS: offset,
-			DurNS:    span.DurationNano,
-			Status:   span.Status,
-			Chiamate: span.Chiamate,
+			ID:        hex.EncodeToString(span.SpanID[:]),
+			Name:      span.Name,
+			Kind:      uint8(span.Kind),
+			OffsetNS:  offset,
+			DurNS:     span.DurationNano,
+			Status:    span.Status,
+			Chiamate:  span.Chiamate,
+			InterneNS: span.InterneNano,
 		}
 		// La radice resta senza genitore nel trace anche quando ne ha uno
 		// remoto: quel genitore vive in un altro servizio e nel waterfall

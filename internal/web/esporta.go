@@ -110,7 +110,7 @@ func (s *Server) Esporta(dir string, minuti int) ([]string, error) {
 		if i >= maxTracceEsportate {
 			break
 		}
-		dati, err := s.costruisciTraccia(riga.ID, base("Trace "+riga.Name, "tracce"))
+		dati, err := s.costruisciTraccia(riga.ID, base("Trace "+riga.Name, "tracce"), 1)
 		if err != nil {
 			// Un trace sparito fra l'elenco e il dettaglio non deve far
 			// fallire tutto l'export.

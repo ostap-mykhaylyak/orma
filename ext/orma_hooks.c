@@ -474,14 +474,24 @@ static void orma_profilo_chiama(int indice, zif_handler originale,
 		return;
 	}
 
+	uint32_t profondita = ORMA_G(txn).profilo_profondita++;
 	uint64_t inizio = orma_now_monotonic_nano();
 	originale(execute_data, return_value);
 	uint64_t fine = orma_now_monotonic_nano();
+	if (ORMA_G(txn).profilo_profondita > 0) {
+		ORMA_G(txn).profilo_profondita--;
+	}
 
 	orma_profilo *voce = &ORMA_G(txn).profilo[indice];
 	voce->chiamate++;
 	if (fine > inizio) {
+		/* Per funzione il tempo e' inclusivo: e' quello che serve a sapere
+		 * quanto costa. Nel totale entra solo la chiamata piu' esterna, per
+		 * non contare due volte cio' che e' annidato. */
 		voce->nanosecondi += fine - inizio;
+		if (profondita == 0) {
+			ORMA_G(txn).profilo_nano += fine - inizio;
+		}
 	}
 }
 
