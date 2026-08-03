@@ -113,6 +113,16 @@ jobs:
           il daemon lo scrive nel log: **i dati storici si perdono**, quelli di
           telemetria sono rimpiazzabili.
 
+          ## Trovare un rallentamento
+
+          La pagina di un trace si apre con **«Da dove partire»**: le osservazioni
+          già fatte, ordinate per tempo recuperabile — quale funzione interna domina,
+          quali query si ripetono in un ciclo, quali span trattengono tempo proprio, e
+          dove il codice sta aspettando invece di lavorare.
+
+          Il waterfall raccoglie le query identiche in una riga con \`×n\`, si filtra
+          per durata, e dichiara se il tetto degli span lo ha troncato.
+
           ## Cosa costa
 
           Su WordPress vero, misurato con giro di controllo a estensione spenta:
