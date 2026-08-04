@@ -11,7 +11,7 @@
 extern zend_module_entry orma_module_entry;
 #define phpext_orma_ptr &orma_module_entry
 
-#define PHP_ORMA_VERSION "0.1.3"
+#define PHP_ORMA_VERSION "0.1.4"
 
 /* Versione del protocollo agent to daemon: deve restare allineata a
  * protocol.Version nel daemon. Alzata a 2 dal M4, che aggiunge la sezione
