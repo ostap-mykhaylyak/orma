@@ -232,11 +232,15 @@ static void orma_observer_end(zend_execute_data *execute_data, zval *return_valu
 
 	uint64_t interne = ORMA_G(txn).profilo_nano - f->interne_inizio;
 
-	orma_span_record(name, name_len, ORMA_SPAN_INTERNAL,
-	                 f->span_id, f->parent_id,
-	                 start_unix, duration,
-	                 EG(exception) != NULL ? ORMA_STATUS_ERROR : ORMA_STATUS_OK,
-	                 (uint32_t)chiamate, interne);
+	int registrato = orma_span_record(name, name_len, ORMA_SPAN_INTERNAL,
+	                                  f->span_id, f->parent_id,
+	                                  start_unix, duration,
+	                                  EG(exception) != NULL ? ORMA_STATUS_ERROR : ORMA_STATUS_OK,
+	                                  (uint32_t)chiamate, interne);
+
+	/* execute_data e' il frame della funzione appena uscita: la sua
+	 * definizione sta nel suo op_array, e il chiamante sta nel frame sopra. */
+	orma_span_posizioni(registrato, execute_data->func, execute_data);
 }
 
 static zend_observer_fcall_handlers orma_observer_init(zend_execute_data *execute_data)

@@ -116,6 +116,12 @@
   .wf .traccia i.ext { background: var(--ext); }
   .wf .stmt { color: var(--muted); font-size: .74rem; display: block;
               max-width: 60ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* Posizioni nel codice: la riga sotto il nome dello span. */
+  .wf .pos { display: block; font-size: .72rem; color: var(--muted);
+             font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+             max-width: 70ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .wf .pos b { font-weight: 600; font-family: inherit; color: var(--muted); }
+  .wf .pos .sep { opacity: .55; padding: 0 .15rem; }
   .wf tr.errore .etichetta { color: var(--err); }
   /* Le righe dove il tempo si ferma davvero: sono il punto da cui partire. */
   .wf tr.sospetto { background: color-mix(in srgb, var(--accent) 9%, transparent); }

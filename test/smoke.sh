@@ -158,6 +158,28 @@ sqlite3 /var/lib/orma/orma.db \
 	  ORDER BY json_extract(value,'\$.o');" 2>/dev/null | head -14
 
 echo
+echo "== posizioni nel codice =="
+sqlite3 /var/lib/orma/orma.db \
+	"SELECT json_extract(value,'\$.n') ||
+	        '  def ' || COALESCE(json_extract(value,'\$.df.f') || ':' || json_extract(value,'\$.df.l'), '-') ||
+	        '  da ' || COALESCE(json_extract(value,'\$.pl[0].f') || ':' || json_extract(value,'\$.pl[0].l'), '-')
+	   FROM traces, json_each(traces.spans)
+	  WHERE traces.id = (SELECT id FROM traces ORDER BY duration_ns DESC LIMIT 1)
+	  ORDER BY json_extract(value,'\$.o');" 2>/dev/null | head -12
+
+# Senza posizioni il waterfall torna a dire solo "questa funzione e' lenta",
+# senza dire dove sta scritta: e' una regressione silenziosa, va fermata qui.
+con_pila=$(sqlite3 /var/lib/orma/orma.db \
+	"SELECT COUNT(*) FROM traces, json_each(traces.spans)
+	  WHERE json_extract(value,'\$.pl[0].f') IS NOT NULL;" 2>/dev/null)
+if [ "${con_pila:-0}" -gt 0 ]; then
+	echo "  $con_pila span sanno da dove sono stati chiamati"
+else
+	echo "  FALLITO: nessuno span porta la pila di chiamata"
+	exit 1
+fi
+
+echo
 echo "== waterfall grezzo (vecchia vista) =="
 sqlite3 /var/lib/orma/orma.db \
 	"SELECT json_extract(value,'\$.n') || '  ' || ROUND(json_extract(value,'\$.d')/1e6,3) || ' ms'

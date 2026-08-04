@@ -478,6 +478,41 @@ type datiTraccia struct {
 	Soglia   float64
 	Rilievi  []store.Rilievo
 	Query    []store.GruppoQuery
+	// Radice e' il prefisso di percorso comune a tutte le posizioni: si mostra
+	// una volta in testa e si toglie dalle righe, che altrimenti sarebbero tutte
+	// uguali per i primi cinquanta caratteri.
+	Radice string
+}
+
+// Breve rende una posizione leggibile in una riga del waterfall, senza la
+// radice comune. Restituisce vuoto quando la posizione non si conosce, cosi'
+// il template la salta con un semplice with.
+func (d datiTraccia) Breve(p *store.Posizione) string {
+	if p == nil {
+		return ""
+	}
+	return d.posizione(*p)
+}
+
+// Risalita sono i livelli di pila oltre il chiamante immediato, gia' accorciati.
+//
+// Servono per le query: il chiamante immediato e' quasi sempre l'astrazione del
+// framework, e chi ha voluto la query sta uno o due livelli piu' su.
+func (d datiTraccia) Risalita(r store.Riga) []string {
+	var out []string
+	for _, p := range r.Risalita() {
+		if s := d.posizione(p); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func (d datiTraccia) posizione(p store.Posizione) string {
+	if p.File == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s:%d", strings.TrimPrefix(p.File, d.Radice), p.Linea)
 }
 
 // HrefSoglia costruisce il collegamento per cambiare la soglia del waterfall.
@@ -508,6 +543,7 @@ func (s *Server) costruisciTraccia(id int64, c comune, sogliaMS float64) (datiTr
 		Soglia:   sogliaMS,
 		Rilievi:  traccia.Rilievi(),
 		Query:    traccia.RiepilogoQuery(),
+		Radice:   traccia.RadiceComune(),
 	}, nil
 }
 

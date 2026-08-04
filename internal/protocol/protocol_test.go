@@ -45,12 +45,12 @@ func validFrame() []byte {
 	f.u64(2097152)
 	f.u64(1000)
 	f.u64(2000)
-	f.u32(0)       // errori
-	f.u32(0)       // warning
-	f.u32(0)       // span scartati
-	f.u32(1)       // persi: connessione
-	f.u32(2)       // persi: timeout
-	f.u32(0)       // persi: scrittura
+	f.u32(0)    // errori
+	f.u32(0)    // warning
+	f.u32(0)    // span scartati
+	f.u32(1)    // persi: connessione
+	f.u32(2)    // persi: timeout
+	f.u32(0)    // persi: scrittura
 	f.u64(4200) // chiamate di funzione
 
 	f.u32(1) // uno span
@@ -64,6 +64,11 @@ func validFrame() []byte {
 	f.u8(0)
 	f.u32(4200)    // chiamate dentro lo span
 	f.u64(900_000) // tempo in funzioni interne
+	f.u32(9)       // definita in /var/www/indice.php
+	f.u32(120)     // alla riga 120
+	f.u8(1)        // un livello di pila
+	f.u32(9)       // chiamata dallo stesso file
+	f.u32(340)     // alla riga 340
 	f.u16(2)
 	f.u32(4)
 	f.u8(uint8(AttrString))
@@ -134,6 +139,12 @@ func TestDecodeValido(t *testing.T) {
 	}
 	if span.InterneNano != 900_000 {
 		t.Errorf("tempo nelle funzioni interne: %d, atteso 900000", span.InterneNano)
+	}
+	if span.Definizione.File != "/var/www/indice.php" || span.Definizione.Linea != 120 {
+		t.Errorf("definizione errata: %+v", span.Definizione)
+	}
+	if len(span.Pila) != 1 || span.Pila[0].Linea != 340 {
+		t.Errorf("pila errata: %+v", span.Pila)
 	}
 
 	if len(txn.Profilo) != 1 {

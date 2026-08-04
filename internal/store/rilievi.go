@@ -176,13 +176,18 @@ func (t Trace) Rilievi() []Rilievo {
 		if !g.Ripetuta() || g.TotaleMS < soglia/2 {
 			continue
 		}
+		dettaglio := fmt.Sprintf("%.0f ms in totale, %.1f ms l'una — %s",
+			g.TotaleMS, g.MediaMS(), abbrevia(g.Statement, 90))
+		if da := t.origineQuery(g.Statement); da != "" {
+			dettaglio += "\nda " + da
+		}
+
 		out = append(out, Rilievo{
-			Tipo:   RilievoRipetizione,
-			Titolo: fmt.Sprintf("La stessa query eseguita %d volte", g.Chiamate),
-			Dettaglio: fmt.Sprintf("%.0f ms in totale, %.1f ms l'una — %s",
-				g.TotaleMS, g.MediaMS(), abbrevia(g.Statement, 90)),
-			MS:       g.TotaleMS,
-			QuotaPct: quota(g.TotaleMS),
+			Tipo:      RilievoRipetizione,
+			Titolo:    fmt.Sprintf("La stessa query eseguita %d volte", g.Chiamate),
+			Dettaglio: dettaglio,
+			MS:        g.TotaleMS,
+			QuotaPct:  quota(g.TotaleMS),
 			Azione: "Sembra un ciclo che carica un oggetto per volta. " +
 				"Si risolve caricando in blocco prima del ciclo.",
 		})
@@ -198,10 +203,15 @@ func (t Trace) Rilievi() []Rilievo {
 		if ms < soglia {
 			continue
 		}
+		dettaglio := abbrevia(stmt, 140)
+		if da := posizioneUtile(s.Pila); da != "" {
+			dettaglio += "\nda " + da
+		}
+
 		out = append(out, Rilievo{
 			Tipo:      RilievoQuery,
 			Titolo:    fmt.Sprintf("Una singola query da %.0f ms", ms),
-			Dettaglio: abbrevia(stmt, 140),
+			Dettaglio: dettaglio,
 			MS:        ms,
 			QuotaPct:  quota(ms),
 			Azione:    azioneQuery(stmt),
@@ -236,6 +246,10 @@ func (t Trace) Rilievi() []Rilievo {
 				"sembra attesa su qualcosa che orma non vede, non lavoro."
 		}
 
+		if s.Def != nil {
+			dettaglio += fmt.Sprintf(" — definita in %s:%d", s.Def.File, s.Def.Linea)
+		}
+
 		out = append(out, Rilievo{
 			Tipo:      tipo,
 			Titolo:    fmt.Sprintf("%s trattiene %.0f ms", abbrevia(s.Name, 70), ms),
@@ -251,6 +265,30 @@ func (t Trace) Rilievi() []Rilievo {
 		out = out[:8]
 	}
 	return out
+}
+
+// posizioneUtile sceglie il punto piu' informativo di una pila di chiamata.
+//
+// Prende il livello piu' lontano fra quelli registrati, non il chiamante
+// immediato: quello e' quasi sempre l'astrazione del framework — su WordPress
+// wpdb::query — e dire "la query viene da wpdb" non aiuta nessuno.
+func posizioneUtile(pila []Posizione) string {
+	for i := len(pila) - 1; i >= 0; i-- {
+		if pila[i].File != "" {
+			return fmt.Sprintf("%s:%d", pila[i].File, pila[i].Linea)
+		}
+	}
+	return ""
+}
+
+// origineQuery trova da dove parte la prima esecuzione di una query.
+func (t Trace) origineQuery(statement string) string {
+	for _, s := range t.Spans {
+		if statementDi(s) == statement {
+			return posizioneUtile(s.Pila)
+		}
+	}
+	return ""
 }
 
 func azioneProfilo(funzione string) string {

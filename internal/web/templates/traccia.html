@@ -128,6 +128,15 @@
             <span class="etichetta" style="padding-left:{{ indent .Depth }}rem">{{ .Span.Name }}</span>
             {{ if .Ripetuto }}<span class="conteggio">&times;{{ .Ripetuto }}</span>{{ end }}
             {{ with .Statement }}<span class="stmt">{{ . }}</span>{{ end }}
+            {{ $def := $.Breve .Definizione }}{{ $da := $.Breve .Chiamante }}
+            {{ if or $def $da }}
+            <span class="pos" style="padding-left:{{ indent .Depth }}rem">
+              {{ with $def }}<b>definita in</b> {{ . }}{{ end }}
+              {{ if and $def $da }}<span class="sep">&middot;</span>{{ end }}
+              {{ with $da }}<b>chiamata da</b> {{ . }}{{ end }}
+              {{ range $.Risalita . }}<span class="sep">&larr;</span>{{ . }}{{ end }}
+            </span>
+            {{ end }}
           </td>
           <td>
             <div class="traccia">
@@ -164,6 +173,12 @@
     brevi per comparire: molte chiamate significano lavoro, poche significano attesa.
     Le query identiche ripetute sono raccolte in una riga sola con
     <span class="conteggio">&times;n</span>.
+    <br><strong>Definita in</strong> &egrave; il file dove la funzione &egrave; scritta,
+    <strong>chiamata da</strong> il punto che l'ha eseguita; le frecce risalgono la pila,
+    perch&eacute; per le query il chiamante immediato &egrave; quasi sempre il livello di
+    astrazione del framework e non chi ha voluto il lavoro. Le funzioni interne di PHP
+    e le query non hanno una definizione: esistono nel motore, non in un file.
+    {{ with .Radice }}<br>I percorsi sono relativi a <code>{{ . }}</code>.{{ end }}
     {{ if gt .Nascoste 0 }}<br>{{ .Nascoste }} righe sotto soglia non sono mostrate.{{ end }}</span>
   </div>
 

@@ -17,7 +17,18 @@ extern zend_module_entry orma_module_entry;
  * protocol.Version nel daemon. Alzata a 2 dal M4, che aggiunge la sezione
  * degli errori in coda al frame: un daemon vecchio rifiuta il frame con un
  * messaggio chiaro invece di interpretarlo male. */
-#define ORMA_PROTOCOL_VERSION 5
+#define ORMA_PROTOCOL_VERSION 6
+
+/* Quanti livelli di pila si registrano per ogni span.
+ *
+ * Uno solo non basta: il chiamante immediato di una query e' quasi sempre
+ * l'astrazione del framework — su WordPress wpdb::query — e non dice nulla su
+ * chi l'ha voluta. Tre livelli arrivano quasi sempre al plugin. */
+#define ORMA_RIF_MAX 3
+
+/* Percorsi distinti internati per richiesta. Oltre, si copia senza internare:
+ * si spreca arena, non si perde informazione. */
+#define ORMA_MAX_FILE 256
 
 /* Errori conservati per transazione. Oltre, si contano soltanto: cento
  * warning identici non aggiungono informazione. */
@@ -136,6 +147,20 @@ typedef struct _orma_profilo {
 	uint64_t nanosecondi;
 } orma_profilo;
 
+/* Un punto nel codice: file e riga. Il file vive nell'arena, referenziato per
+ * offset perche' una realloc puo' spostarla. */
+typedef struct _orma_posizione {
+	uint32_t file_off;
+	uint32_t file_len;
+	uint32_t linea;
+} orma_posizione;
+
+typedef struct _orma_file_internato {
+	uint32_t off;
+	uint32_t len;
+	uint32_t hash;
+} orma_file_internato;
+
 typedef struct _orma_span {
 	uint8_t   span_id[ORMA_SPAN_ID_LEN];
 	uint8_t   parent_span_id[ORMA_SPAN_ID_LEN];
@@ -157,6 +182,13 @@ typedef struct _orma_span {
 	uint64_t  duration_nano;
 	uint8_t   attr_count;
 	orma_attr attrs[ORMA_MAX_SPAN_ATTRS];
+
+	/* Dove la funzione e' scritta. Vuota per le funzioni interne di PHP, che
+	 * non stanno in nessun file. */
+	orma_posizione definizione;
+	/* Da dove e' stata chiamata, risalendo la pila del codice utente. */
+	orma_posizione pila[ORMA_RIF_MAX];
+	uint8_t        pila_n;
 } orma_span;
 
 /* Severita' di un evento registrato. Solo ORMA_SEVERITA_ERRORE marca la
@@ -283,6 +315,11 @@ ZEND_BEGIN_MODULE_GLOBALS(orma)
 	uint32_t   span_count;
 	uint32_t   span_cap;
 	orma_buf   arena;
+
+	/* I percorsi si ripetono moltissimo: internarli evita di copiare
+	 * centinaia di volte la stessa stringa lunga nell'arena. */
+	orma_file_internato file_tab[ORMA_MAX_FILE];
+	uint32_t            file_count;
 
 	/* Pila dell'observer sulle funzioni utente. */
 	struct _orma_frame *stack;

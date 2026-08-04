@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 )
 
 // TraceSpan e' uno span dentro un trace salvato. I nomi dei campi JSON sono
@@ -13,17 +14,31 @@ import (
 // L'inizio e' relativo all'inizio della transazione: cosi' il waterfall si
 // disegna senza sottrazioni, e il payload non dipende dall'ora assoluta.
 type TraceSpan struct {
-	ID        string            `json:"i"`
-	Parent    string            `json:"p,omitempty"`
-	Name      string            `json:"n"`
-	Kind      uint8             `json:"k"`
-	OffsetNS  uint64            `json:"o"`
-	DurNS     uint64            `json:"d"`
-	Status    uint8             `json:"s,omitempty"`
-	Chiamate  uint32            `json:"c,omitempty"`
-	InterneNS uint64            `json:"in,omitempty"`
-	Attrs     map[string]string `json:"a,omitempty"`
+	ID        string `json:"i"`
+	Parent    string `json:"p,omitempty"`
+	Name      string `json:"n"`
+	Kind      uint8  `json:"k"`
+	OffsetNS  uint64 `json:"o"`
+	DurNS     uint64 `json:"d"`
+	Status    uint8  `json:"s,omitempty"`
+	Chiamate  uint32 `json:"c,omitempty"`
+	InterneNS uint64 `json:"in,omitempty"`
+	// Def e' dove la funzione e' scritta: assente per le query e per le
+	// funzioni interne di PHP, che non stanno in nessun file.
+	Def *Posizione `json:"df,omitempty"`
+	// Pila e' da dove e' partita la chiamata, dal chiamante immediato in su.
+	Pila  []Posizione       `json:"pl,omitempty"`
+	Attrs map[string]string `json:"a,omitempty"`
 }
+
+// Posizione e' un punto nel codice.
+type Posizione struct {
+	File  string `json:"f"`
+	Linea uint32 `json:"l"`
+}
+
+// Vuota indica una posizione non disponibile.
+func (p Posizione) Vuota() bool { return p.File == "" }
 
 // TraceProfilo e' il costo di una funzione interna dentro un trace.
 type TraceProfilo struct {
@@ -162,6 +177,92 @@ func (r Riga) Categoria() string {
 // Statement restituisce lo statement SQL se lo span e' una query.
 func (r Riga) Statement() string {
 	return r.Span.Attrs["db.statement"]
+}
+
+// Definizione e' dove la funzione e' scritta, se si sa.
+func (r Riga) Definizione() *Posizione {
+	return r.Span.Def
+}
+
+// Chiamante e' il punto da cui e' partita la chiamata.
+func (r Riga) Chiamante() *Posizione {
+	if len(r.Span.Pila) == 0 {
+		return nil
+	}
+	return &r.Span.Pila[0]
+}
+
+// Risalita sono i livelli oltre il chiamante immediato: servono quando quello
+// e' l'astrazione del framework e non chi ha davvero voluto la chiamata.
+func (r Riga) Risalita() []Posizione {
+	if len(r.Span.Pila) <= 1 {
+		return nil
+	}
+	return r.Span.Pila[1:]
+}
+
+// RadiceComune e' la parte iniziale condivisa da tutti i percorsi del trace.
+//
+// Serve solo a togliere rumore: su un'installazione tipica ogni riga
+// comincerebbe con /home/utente/public_html/wp-content, che si legge una volta
+// sola e poi disturba.
+func (t Trace) RadiceComune() string {
+	var radice string
+	primo := true
+
+	visita := func(p Posizione) {
+		if p.File == "" {
+			return
+		}
+		dir := p.File
+		if i := strings.LastIndexByte(dir, '/'); i > 0 {
+			dir = dir[:i+1]
+		} else {
+			dir = ""
+		}
+		if primo {
+			radice = dir
+			primo = false
+			return
+		}
+		radice = prefissoComune(radice, dir)
+	}
+
+	for _, s := range t.Spans {
+		if s.Def != nil {
+			visita(*s.Def)
+		}
+		for _, p := range s.Pila {
+			visita(p)
+		}
+	}
+
+	// Una radice troppo corta non toglie rumore e fa solo perdere contesto.
+	if len(radice) < 8 {
+		return ""
+	}
+	// Il prefisso comune di due percorsi puo' fermarsi in mezzo a un nome:
+	// wp-content e wp-config danno wp-co, che non e' una directory. In quel
+	// caso si torna indietro all'ultima barra.
+	if strings.HasSuffix(radice, "/") {
+		return radice
+	}
+	if i := strings.LastIndexByte(radice, '/'); i >= 0 {
+		return radice[:i+1]
+	}
+	return ""
+}
+
+func prefissoComune(a, b string) string {
+	n := len(a)
+	if len(b) < n {
+		n = len(b)
+	}
+	i := 0
+	for i < n && a[i] == b[i] {
+		i++
+	}
+	return a[:i]
 }
 
 // Waterfall ordina gli span ad albero e calcola le proporzioni delle barre.

@@ -251,6 +251,23 @@ static bool orma_emit_events(orma_buf *out, orma_strtab *tab, const orma_txn *tx
 	return true;
 }
 
+static void orma_intern_posizione(orma_strtab *tab, const orma_posizione *pos)
+{
+	if (pos->file_len > 0) {
+		orma_intern(tab, orma_arena_str(pos->file_off), pos->file_len);
+	}
+}
+
+static bool orma_emit_posizione(orma_buf *out, orma_strtab *tab, const orma_posizione *pos)
+{
+	uint32_t idx = 0;
+	if (pos->file_len > 0) {
+		idx = orma_intern(tab, orma_arena_str(pos->file_off), pos->file_len);
+	}
+	if (!orma_put_u32(out, idx)) return false;
+	return orma_put_u32(out, pos->linea);
+}
+
 /* Interna nomi e valori degli span figli, senza emettere nulla. */
 static void orma_intern_children(orma_strtab *tab)
 {
@@ -258,6 +275,10 @@ static void orma_intern_children(orma_strtab *tab)
 		const orma_span *span = &ORMA_G(spans)[i];
 
 		orma_intern(tab, orma_arena_str(span->name_off), span->name_len);
+		orma_intern_posizione(tab, &span->definizione);
+		for (uint8_t p = 0; p < span->pila_n; p++) {
+			orma_intern_posizione(tab, &span->pila[p]);
+		}
 
 		for (uint8_t a = 0; a < span->attr_count; a++) {
 			const orma_attr *attr = &span->attrs[a];
@@ -285,6 +306,13 @@ static bool orma_emit_children(orma_buf *out, orma_strtab *tab, const orma_txn *
 		if (!orma_put_u8(out, span->status)) return false;
 		if (!orma_put_u32(out, span->chiamate)) return false;
 		if (!orma_put_u64(out, span->interne_nano)) return false;
+
+		if (!orma_emit_posizione(out, tab, &span->definizione)) return false;
+		if (!orma_put_u8(out, span->pila_n)) return false;
+		for (uint8_t p = 0; p < span->pila_n; p++) {
+			if (!orma_emit_posizione(out, tab, &span->pila[p])) return false;
+		}
+
 		if (!orma_put_u16(out, span->attr_count)) return false;
 
 		for (uint8_t a = 0; a < span->attr_count; a++) {
@@ -306,10 +334,17 @@ static bool orma_emit_children(orma_buf *out, orma_strtab *tab, const orma_txn *
 bool orma_proto_encode(const orma_txn *txn, orma_buf *out)
 {
 	orma_strtab tab;
-	tab.count = 0;
 
-	/* L'indice 0 e' riservato alla stringa vuota. */
-	orma_intern(&tab, "", 0);
+	/* L'indice 0 e' riservato alla stringa vuota: e' cosi' che un campo
+	 * facoltativo dice "niente", ed e' anche il ripiego quando la tabella e'
+	 * piena. Va occupato a mano: orma_intern su una stringa vuota restituisce 0
+	 * senza inserire nulla, e senza questa riga l'indice 0 finirebbe alla prima
+	 * stringa vera, facendo comparire il nome dell'applicazione al posto dei
+	 * campi assenti. */
+	tab.ptr[0] = "";
+	tab.len[0] = 0;
+	tab.hash[0] = orma_hash("", 0);
+	tab.count = 1;
 
 	const char *app = ORMA_G(app_name);
 	if (app == NULL || *app == '\0') {
@@ -386,6 +421,11 @@ bool orma_proto_encode(const orma_txn *txn, orma_buf *out)
 	if (!orma_put_u8(out, txn->errors > 0 ? ORMA_STATUS_ERROR : ORMA_STATUS_OK)) return false;
 	if (!orma_put_u32(out, txn->chiamate > UINT32_MAX ? UINT32_MAX : (uint32_t)txn->chiamate)) return false;
 	if (!orma_put_u64(out, txn->profilo_nano)) return false;
+
+	/* La radice non ha ne' definizione ne' chiamante: e' la richiesta. */
+	if (!orma_put_u32(out, 0)) return false;
+	if (!orma_put_u32(out, 0)) return false;
+	if (!orma_put_u8(out, 0)) return false;
 
 	uint16_t attr_count = (txn->background ? 1 : 2) + (uint16_t)txn->custom_count;
 	if (!orma_put_u16(out, attr_count)) return false;

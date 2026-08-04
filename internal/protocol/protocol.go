@@ -20,8 +20,9 @@ import (
 // gli eventi; la 3 i frame che l'agent non ha consegnato; la 4 separa quei
 // frame per causa e aggiunge il conteggio delle chiamate e il profilo delle
 // funzioni interne; la 5 attribuisce il tempo delle funzioni interne al
-// singolo span, invece che alla sola transazione.
-const Version = 5
+// singolo span, invece che alla sola transazione; la 6 aggiunge il file dove
+// ogni funzione e' definita e la pila da cui e' stata chiamata.
+const Version = 6
 
 // Limiti di sanita': un mittente corretto non li raggiunge mai.
 const (
@@ -30,6 +31,7 @@ const (
 	maxAttrs   = 256
 	maxEvents  = 256
 	maxProfilo = 256
+	maxPila    = 16
 )
 
 // Severity distingue cio' che rompe una richiesta da cio' che la sporca.
@@ -123,8 +125,24 @@ type Span struct {
 	// span era aperto: dice se il tempo proprio e' lavoro PHP o costo di
 	// regex, serializzazione e filesystem.
 	InterneNano uint64
-	Attrs       []Attr
+	// Definizione e' dove la funzione e' scritta. Vuota per le funzioni
+	// interne di PHP e per le query, che non stanno in nessun file.
+	Definizione Posizione
+	// Pila e' da dove e' partita la chiamata, dal chiamante immediato in su.
+	// Piu' di un livello serve perche' il chiamante immediato di una query e'
+	// quasi sempre l'astrazione del framework, non chi l'ha voluta.
+	Pila  []Posizione
+	Attrs []Attr
 }
+
+// Posizione e' un punto nel codice.
+type Posizione struct {
+	File  string
+	Linea uint32
+}
+
+// Vuota indica una posizione non disponibile.
+func (p Posizione) Vuota() bool { return p.File == "" }
 
 // Transaction e' una richiesta completa: lo span radice piu' i metadati di
 // processo che non appartengono a nessuno span in particolare.
@@ -437,6 +455,19 @@ func decodeSpan(r *reader, lookup func(uint32) string) (Span, error) {
 	s.Status = r.u8()
 	s.Chiamate = r.u32()
 	s.InterneNano = r.u64()
+
+	s.Definizione = Posizione{File: lookup(r.u32()), Linea: r.u32()}
+
+	pila := r.u8()
+	if r.err != nil {
+		return s, r.err
+	}
+	if pila > maxPila {
+		return s, fmt.Errorf("pila di chiamata troppo profonda: %d, massimo %d", pila, maxPila)
+	}
+	for i := uint8(0); i < pila; i++ {
+		s.Pila = append(s.Pila, Posizione{File: lookup(r.u32()), Linea: r.u32()})
+	}
 
 	attrCount := r.u16()
 	if r.err != nil {

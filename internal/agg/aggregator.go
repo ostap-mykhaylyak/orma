@@ -311,6 +311,18 @@ func buildTrace(txn *protocol.Transaction, app, name, kind string, ts int64) *st
 			Chiamate:  span.Chiamate,
 			InterneNS: span.InterneNano,
 		}
+		if !span.Definizione.Vuota() {
+			ts.Def = &store.Posizione{
+				File:  span.Definizione.File,
+				Linea: span.Definizione.Linea,
+			}
+		}
+		for _, p := range span.Pila {
+			if p.Vuota() {
+				continue
+			}
+			ts.Pila = append(ts.Pila, store.Posizione{File: p.File, Linea: p.Linea})
+		}
 		// La radice resta senza genitore nel trace anche quando ne ha uno
 		// remoto: quel genitore vive in un altro servizio e nel waterfall
 		// locale non c'e' nulla a cui appenderla.

@@ -234,7 +234,11 @@ payload:= string_table | transaction | span[]
 ```
 
 La **string table** è per-payload: nomi di funzione, tabelle e host si ripetono molto,
-internarli taglia il payload di parecchio.
+internarli taglia il payload di parecchio. L'**indice 0 è sempre la stringa vuota**: è
+così che un campo facoltativo dice "assente", ed è anche il ripiego quando la tabella si
+riempie. La casella va occupata a mano in testa al frame — internare `""` restituisce 0
+senza inserire nulla, e per tre versioni l'indice 0 è finito alla prima stringa vera,
+facendo comparire il nome dell'applicazione al posto dei campi assenti.
 
 **Span**
 
@@ -248,6 +252,10 @@ internarli taglia il payload di parecchio.
 | `start_unix_nano` | u64 | |
 | `duration_nano` | u64 | da clock monotonico |
 | `status` | u8 | ok / error |
+| `chiamate` | u32 | funzioni utente eseguite dentro lo span |
+| `interne_nano` | u64 | tempo nelle funzioni interne profilate |
+| `definizione` | idx string + u32 | file e riga dove la funzione è scritta |
+| `pila` | u8 n + n×(idx string + u32) | da dove è partita la chiamata, fino a 3 livelli |
 | `attributes` | k/v | chiavi OTel semantic conventions |
 
 Chiavi attributo: `db.system`, `db.statement`, `db.operation`, `http.request.method`,
@@ -406,6 +414,23 @@ e 1409 `preg_match` per richiesta. Costa due letture di orologio per chiamata de
 funzioni in elenco; misurato su WordPress, l'overhead resta dentro l'intervallo già
 osservato senza profilo.
 
+**Le posizioni nel codice** — per ogni span, il file e la riga dove la funzione è
+*definita*, e il punto da cui è stata *chiamata*. Sono due domande diverse: la prima dice
+di chi è il codice — quale plugin, quale tema — la seconda dice chi lo ha voluto. Le query
+e le connessioni non hanno una definizione, esistono nel motore; hanno però un chiamante,
+ed è quello che serve.
+
+Della pila si registrano **tre livelli**, non uno: per una query il chiamante immediato è
+quasi sempre l'astrazione del framework — su WordPress `wpdb::query` — e sapere che la
+query viene da `wpdb` non serve a niente. Tre livelli bastano quasi sempre ad arrivare al
+plugin. La raccolta costa una risalita di `prev_execute_data` per span registrato, senza
+allocazioni: i percorsi vanno nell'arena già usata per i nomi, deduplicati per hash, e nel
+frame diventano indici della string table.
+
+Nella UI i percorsi si mostrano relativi alla radice comune del trace: su
+un'installazione tipica ogni riga comincerebbe con gli stessi cinquanta caratteri, che si
+leggono una volta sola.
+
 ### L'analisi la fa il programma
 
 Le tre aggiunte sopra danno i dati; leggerli resta lavoro meccanico. Guardare quale
@@ -554,3 +579,8 @@ direttamente da `php -i` e rifiuta di procedere se non corrispondono.
   storage a saturazione in giorni.
 - **Privacy**: l'offuscamento SQL è attivo di default e i parametri delle query non
   vengono mai serializzati. Stesso discorso per le query string negli `url.full`.
+- **String table, indice 0**: deve contenere la stringa vuota, e va inserita
+  esplicitamente. Il test del protocollo costruisce i frame a mano e la metteva al posto
+  giusto, quindi passava; il difetto è uscito solo dalla prova end-to-end, dove i campi
+  assenti mostravano il nome dell'applicazione. È il motivo per cui `test/smoke.sh` resta
+  necessario anche avendo i test unitari.

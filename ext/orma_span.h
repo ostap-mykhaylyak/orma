@@ -13,8 +13,9 @@ int  orma_span_open(const char *name, size_t name_len, uint8_t kind);
 void orma_span_close(int idx, uint8_t status);
 
 /* Registra uno span gia' concluso, con identificativi e tempi decisi dal
- * chiamante. La usa l'observer, che sa solo alla fine se lo span va emesso. */
-void orma_span_record(const char *name, size_t name_len, uint8_t kind,
+ * chiamante. La usa l'observer, che sa solo alla fine se lo span va emesso.
+ * Restituisce l'indice, o -1 se non c'e' piu' posto. */
+int orma_span_record(const char *name, size_t name_len, uint8_t kind,
                       const uint8_t span_id[ORMA_SPAN_ID_LEN],
                       const uint8_t parent_id[ORMA_SPAN_ID_LEN],
                       uint64_t start_unix_nano, uint64_t duration_nano,
@@ -33,5 +34,13 @@ const char *orma_arena_str(uint32_t off);
 
 /* Copia una stringa nell'arena restituendone offset e lunghezza. */
 bool orma_arena_copy(const char *s, size_t len, uint32_t *off, uint32_t *out_len);
+
+/* Come sopra, ma interna: un percorso gia' visto in questa richiesta non viene
+ * ricopiato. I file si ripetono su quasi ogni span, e senza questo l'arena
+ * conterrebbe centinaia di copie della stessa stringa lunga. */
+bool orma_arena_file(const char *s, size_t len, uint32_t *off, uint32_t *out_len);
+
+/* Riempie definizione e pila di uno span gia' registrato. */
+void orma_span_posizioni(int idx, const zend_function *fbc, zend_execute_data *ex);
 
 #endif /* ORMA_SPAN_H */

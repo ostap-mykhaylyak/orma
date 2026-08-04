@@ -112,7 +112,7 @@ I verbi di servizio si scrivono senza trattini, tutto il resto con i trattini.
 | Database | le query aggregate per forma, già offuscate |
 | Esterne | le chiamate uscenti per host |
 | Errori | errori ed eccezioni raggruppati per forma, fatali distinti dagli avvisi |
-| Tracce | le richieste conservate per intero, con il waterfall, il tempo proprio di ogni span e il profilo delle funzioni interne |
+| Tracce | le richieste conservate per intero, con il waterfall, il tempo proprio di ogni span, il file e la riga di ogni chiamata e il profilo delle funzioni interne |
 | Stato | i contatori del daemon: quanto ha ricevuto, quanto ha perso, quanto occupa |
 
 I grafici sono SVG generato dal server: nessuno script, nessuna libreria, niente che
@@ -139,7 +139,7 @@ Le regole riconoscono funzioni interne che dominano, query ripetute (il sospetto
 N+1), query singole lente, span che trattengono molto tempo proprio, e il caso in cui
 un tratto di codice non sta lavorando ma **aspettando**.
 
-Sotto ci sono tre tabelle e un waterfall:
+Sotto ci sono le tabelle e il waterfall:
 
 **Il tempo proprio.** Ogni span mostra la durata meno quella dei figli registrati. Le
 righe dove il tempo si ferma davvero sono marcate: sono quelle da cui partire.
@@ -151,12 +151,23 @@ significano attesa — due problemi con due rimedi opposti.
 **Il tempo in funzioni interne, per span.** Non solo quanto costa `preg_replace_callback`
 in tutta la richiesta, ma dentro quale metodo.
 
-**Il tempo proprio.** Ogni span mostra la durata meno quella dei figli registrati. Le
-righe dove il tempo si ferma davvero sono marcate: sono quelle da cui partire.
+**Dove sta il codice.** Sotto ogni span il file e la riga in cui la funzione è
+**definita**, e il punto da cui è stata **chiamata**:
 
-**Il conteggio delle chiamate.** Quante funzioni sono state eseguite dentro uno span,
-comprese quelle troppo brevi per comparire. Molte chiamate significano lavoro, poche
-significano attesa — due problemi con due rimedi opposti.
+```
+Elementor\Frontend::get_builder_content
+  definita in plugins/elementor/core/frontend.php:1103 · chiamata da plugins/elementor/core/frontend.php:1052 ← themes/negozio/single.php:34
+
+SELECT * FROM wp_postmeta WHERE post_id = ? …
+  chiamata da wp-includes/class-wpdb.php:2431 ← wp-includes/meta.php:1210 ← plugins/prezzi/listino.php:88
+```
+
+Sono due domande diverse: la prima dice di chi è il codice — quale plugin, quale tema — la
+seconda dice chi lo ha voluto. Query e chiamate esterne non hanno una definizione, ma
+hanno un chiamante, ed è quello che serve. Della pila si mostrano **tre livelli**, perché
+per una query il chiamante immediato è quasi sempre `wpdb::query`, e sapere che la query
+viene da `wpdb` non serve a niente. I percorsi sono relativi alla radice comune del trace,
+indicata in fondo alla pagina.
 
 **Il profilo delle funzioni interne.** Espressioni regolari, serializzazione, accessi al
 filesystem, compressione, immagini, attese: quante volte e per quanto. Su una homepage
