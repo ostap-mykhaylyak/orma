@@ -136,9 +136,16 @@ era basata su nulla. Numeri veri, da `test/overhead.sh` su PHP 8.5 in container:
 | | sole chiamate di funzione | pagina con molte query |
 |---|---|---|
 | `orma.enabled = 0` | ~0% | ~0% |
-| `detail = 0` | ~0% | **5%** |
-| `detail = 1` | **70–80%** | **10%** |
-| `detail = 2` | 160–180% | 13% |
+| `detail = 0` | ~0% | **3%** |
+| `detail = 1` | **~89%** | **~12%** |
+| `detail = 2` | ~170% | ~14% |
+
+Le posizioni nel codice costano **uno o due punti**: misurate nella stessa sessione, sulla
+stessa macchina, v0.1.2 dava 86,7% e 10,9% dove la versione con la risalita della pila dà
+88,6% e 12,4%. È dentro la varianza fra giri, ma il segno è quello atteso e va detto. Il
+confronto si rifà creando un worktree sul tag e rieseguendo `test/overhead.sh`: numeri
+presi in sessioni diverse non sono confrontabili, ed è il motivo per cui la tabella qui
+sopra è stata riscritta invece di aggiungere una riga.
 
 Il primo carico è deliberatamente il caso peggiore: mezzo milione di chiamate di
 funzione in trenta millisecondi, dove qualunque lavoro per chiamata pesa enormemente. Il

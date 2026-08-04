@@ -362,16 +362,17 @@ l'utente. Su una macchina carica cinque millisecondi possono non bastare — la 
 ## Cosa costa
 
 **Su WordPress vero**, misurato con `test/fpm/` — WordPress 7 su php-fpm, 3000 richieste
-per giro, con e senza estensione: **fra il 4% e il 9% di throughput** con `detail = 1`.
+per giro, con e senza estensione: **fra il 4% e il 10% di throughput** con `detail = 1`.
 
 La memoria dei worker non cresce. Su 3000 richieste con `pm.max_requests = 0`, cioè
 senza riciclo, i worker con orma attiva sono cresciuti *meno* di quelli senza: la
 crescita che si osserva è riscaldamento di WordPress e opcache, non nostra.
 
-Sui carichi sintetici di `test/overhead.sh`: circa il 5% con `detail = 0` e il 10% con
+Sui carichi sintetici di `test/overhead.sh`: circa il 3% con `detail = 0` e il 12% con
 `detail = 1` su una pagina con molte query; su codice fatto di sole chiamate di funzione
-`detail = 1` arriva al 70–80%, che è il caso peggiore possibile ma esiste. La tabella
-completa è in [DESIGN.md](DESIGN.md#costo-misurato).
+`detail = 1` arriva a circa il 90%, che è il caso peggiore possibile ma esiste. La tabella
+completa è in [DESIGN.md](DESIGN.md#costo-misurato), insieme a quanto costano le posizioni
+nel codice: uno o due punti, misurati confrontando due versioni nella stessa sessione.
 
 Il costo con `detail = 0` è l'instrumentazione delle query: è il prezzo di sapere quali
 girano. Se ti serve il minimo assoluto, `orma.enabled = 0` costa zero misurabile.
