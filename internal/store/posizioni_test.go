@@ -64,7 +64,7 @@ func TestPosizioneUtileSaltaIlFramework(t *testing.T) {
 	}
 }
 
-func TestOrigineQuery(t *testing.T) {
+func TestSpanQuery(t *testing.T) {
 	tr := Trace{Spans: []TraceSpan{
 		{ID: "a", Name: "SELECT", Attrs: map[string]string{"db.statement": "SELECT 1"},
 			Pila: []Posizione{{File: "/app/lista.php", Linea: 12}}},
@@ -72,10 +72,55 @@ func TestOrigineQuery(t *testing.T) {
 			Pila: []Posizione{{File: "/app/altro.php", Linea: 99}}},
 	}}
 
-	if got := tr.origineQuery("SELECT 1"); got != "/app/lista.php:12" {
-		t.Errorf("origine %q", got)
+	s := tr.spanQuery("SELECT 1")
+	if s == nil || s.ID != "a" {
+		t.Fatalf("prima esecuzione non trovata: %+v", s)
 	}
-	if got := tr.origineQuery("SELECT 2"); got != "" {
-		t.Errorf("query assente: %q", got)
+	if tr.spanQuery("SELECT 2") != nil {
+		t.Error("query assente trovata lo stesso")
+	}
+}
+
+// La domanda davanti a una query lenta e' "quale plugin la esegue": il percorso
+// contiene gia' la risposta, e le astrazioni del core non devono coprirla.
+func TestComponente(t *testing.T) {
+	casi := map[string]struct {
+		span   TraceSpan
+		attesa string
+	}{
+		"plugin dalla pila di una query": {
+			span: TraceSpan{Pila: []Posizione{
+				{File: "/var/www/wp-includes/class-wpdb.php", Linea: 2351},
+				{File: "/var/www/wp-includes/meta.php", Linea: 1210},
+				{File: "/var/www/wp-content/plugins/complianz-gdpr/cookie.php", Linea: 88},
+			}},
+			attesa: "complianz-gdpr",
+		},
+		"tema dalla definizione": {
+			span:   TraceSpan{Def: &Posizione{File: "/var/www/wp-content/themes/negozio/loop.php", Linea: 18}},
+			attesa: "negozio",
+		},
+		"pacchetto composer, autore compreso": {
+			span:   TraceSpan{Def: &Posizione{File: "/srv/app/vendor/guzzlehttp/guzzle/src/Client.php", Linea: 200}},
+			attesa: "guzzlehttp/guzzle",
+		},
+		"solo core: nessun componente": {
+			span: TraceSpan{Pila: []Posizione{
+				{File: "/var/www/wp-includes/class-wpdb.php", Linea: 2351},
+			}},
+			attesa: "",
+		},
+		"contenitore senza nome dopo": {
+			span:   TraceSpan{Def: &Posizione{File: "/var/www/wp-content/plugins", Linea: 1}},
+			attesa: "",
+		},
+	}
+
+	for nome, c := range casi {
+		t.Run(nome, func(t *testing.T) {
+			if got := componenteSpan(c.span); got != c.attesa {
+				t.Errorf("componente %q, atteso %q", got, c.attesa)
+			}
+		})
 	}
 }

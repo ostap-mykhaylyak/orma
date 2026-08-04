@@ -131,6 +131,7 @@
             {{ $def := $.Breve .Definizione }}{{ $da := $.Breve .Chiamante }}
             {{ if or $def $da }}
             <span class="pos" style="padding-left:{{ indent .Depth }}rem">
+              {{ with .Componente }}<span class="comp">{{ . }}</span>{{ end }}
               {{ with $def }}<b>definita in</b> {{ . }}{{ end }}
               {{ if and $def $da }}<span class="sep">&middot;</span>{{ end }}
               {{ with $da }}<b>chiamata da</b> {{ . }}{{ end }}
@@ -173,11 +174,13 @@
     brevi per comparire: molte chiamate significano lavoro, poche significano attesa.
     Le query identiche ripetute sono raccolte in una riga sola con
     <span class="conteggio">&times;n</span>.
-    <br><strong>Definita in</strong> &egrave; il file dove la funzione &egrave; scritta,
-    <strong>chiamata da</strong> il punto che l'ha eseguita; le frecce risalgono la pila,
-    perch&eacute; per le query il chiamante immediato &egrave; quasi sempre il livello di
-    astrazione del framework e non chi ha voluto il lavoro. Le funzioni interne di PHP
-    e le query non hanno una definizione: esistono nel motore, non in un file.
+    <br>Il riquadro colorato &egrave; il <strong>componente</strong>: il plugin, il tema
+    o il pacchetto a cui appartiene il codice. <strong>Definita in</strong> &egrave; il
+    file dove la funzione &egrave; scritta, <strong>chiamata da</strong> il punto che
+    l'ha eseguita; le frecce risalgono la pila, un livello per file, perch&eacute; per le
+    query il chiamante immediato &egrave; quasi sempre il livello di astrazione del
+    framework e non chi ha voluto il lavoro. Le funzioni interne di PHP e le query non
+    hanno una definizione: esistono nel motore, non in un file.
     {{ with .Radice }}<br>I percorsi sono relativi a <code>{{ . }}</code>.{{ end }}
     {{ if gt .Nascoste 0 }}<br>{{ .Nascoste }} righe sotto soglia non sono mostrate.{{ end }}</span>
   </div>

@@ -201,6 +201,56 @@ func (r Riga) Risalita() []Posizione {
 	return r.Span.Pila[1:]
 }
 
+// Componente dice di chi e' il codice: quale plugin, quale tema, quale
+// pacchetto. E' la risposta alla domanda che si fa davanti a una query lenta —
+// "chi la esegue?" — e il percorso ce l'ha gia' dentro.
+//
+// Si guarda prima dove la funzione e' definita, poi si risale la pila dal
+// chiamante piu' vicino: il primo pezzo di codice riconoscibile e' quello che
+// ha voluto il lavoro. Le astrazioni del framework stanno nel suo core, che non
+// somiglia a nessuno di questi schemi e viene scavalcato.
+func (r Riga) Componente() string { return componenteSpan(r.Span) }
+
+func componenteSpan(s TraceSpan) string {
+	if s.Def != nil {
+		if c := componenteDi(s.Def.File); c != "" {
+			return c
+		}
+	}
+	for _, p := range s.Pila {
+		if c := componenteDi(p.File); c != "" {
+			return c
+		}
+	}
+	return ""
+}
+
+// Directory che contengono un componente per nome. Coprono WordPress
+// (wp-content/plugins, themes, mu-plugins), Composer (vendor/autore/pacchetto)
+// e la convenzione modules/ di Drupal e di parecchi framework.
+var contenitori = map[string]int{
+	"plugins":    1,
+	"mu-plugins": 1,
+	"themes":     1,
+	"modules":    1,
+	"extensions": 1,
+	"vendor":     2,
+}
+
+func componenteDi(file string) string {
+	parti := strings.Split(file, "/")
+	for i, p := range parti {
+		n, ok := contenitori[p]
+		if !ok || i+n >= len(parti) {
+			continue
+		}
+		// Il nome del componente, non il file: con vendor servono due segmenti,
+		// perche' "vendor/guzzlehttp" da solo non dice quale pacchetto.
+		return strings.Join(parti[i+1:i+1+n], "/")
+	}
+	return ""
+}
+
 // RadiceComune e' la parte iniziale condivisa da tutti i percorsi del trace.
 //
 // Serve solo a togliere rumore: su un'installazione tipica ogni riga

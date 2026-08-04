@@ -261,18 +261,34 @@ void orma_span_posizioni(int idx, const zend_function *fbc, zend_execute_data *e
 	}
 
 	/* Da dove e' partita la chiamata: si risale saltando i frame che non sono
-	 * codice utente, perche' quelli non hanno un file da mostrare. */
+	 * codice utente, perche' quelli non hanno un file da mostrare.
+	 *
+	 * Si registra un livello per file. Dentro un'astrazione come wpdb la catena
+	 * query -> _do_query -> ... sta tutta nello stesso file, e riempirebbe i
+	 * livelli disponibili senza uscire dal framework: la riga finirebbe per
+	 * dire tre volte "la query passa da wpdb", che si sapeva gia'. Del file si
+	 * tiene il frame piu' basso, quello con la riga esatta della chiamata. */
 	span->pila_n = 0;
+	zend_string *ultimo = NULL;
+	uint32_t risaliti = 0;
+
 	for (zend_execute_data *frame = ex != NULL ? ex->prev_execute_data : NULL;
-	     frame != NULL && span->pila_n < ORMA_RIF_MAX;
+	     frame != NULL && span->pila_n < ORMA_RIF_MAX && risaliti < ORMA_RIF_FRAME_MAX;
 	     frame = frame->prev_execute_data) {
 
+		risaliti++;
 		if (frame->func == NULL || !ZEND_USER_CODE(frame->func->type)
 		    || frame->func->op_array.filename == NULL || frame->opline == NULL) {
 			continue;
 		}
-		orma_posizione_da(&span->pila[span->pila_n], frame->func->op_array.filename,
-		                  frame->opline->lineno);
+
+		zend_string *file = frame->func->op_array.filename;
+		if (ultimo != NULL && zend_string_equals(ultimo, file)) {
+			continue;
+		}
+		ultimo = file;
+
+		orma_posizione_da(&span->pila[span->pila_n], file, frame->opline->lineno);
 		span->pila_n++;
 	}
 }

@@ -156,18 +156,25 @@ in tutta la richiesta, ma dentro quale metodo.
 
 ```
 Elementor\Frontend::get_builder_content
-  definita in plugins/elementor/core/frontend.php:1103 · chiamata da plugins/elementor/core/frontend.php:1052 ← themes/negozio/single.php:34
+  [elementor]  definita in plugins/elementor/core/frontend.php:1103 · chiamata da plugins/elementor/core/frontend.php:1052 ← themes/negozio/single.php:34
 
-SELECT * FROM wp_postmeta WHERE post_id = ? …
-  chiamata da wp-includes/class-wpdb.php:2431 ← wp-includes/meta.php:1210 ← plugins/prezzi/listino.php:88
+select * from wp_cmplz_cookies where ID = ?
+  [complianz-gdpr]  chiamata da wp-includes/class-wpdb.php:2351 ← plugins/complianz-gdpr/cookiebanner.php:88
 ```
 
-Sono due domande diverse: la prima dice di chi è il codice — quale plugin, quale tema — la
-seconda dice chi lo ha voluto. Query e chiamate esterne non hanno una definizione, ma
-hanno un chiamante, ed è quello che serve. Della pila si mostrano **tre livelli**, perché
-per una query il chiamante immediato è quasi sempre `wpdb::query`, e sapere che la query
-viene da `wpdb` non serve a niente. I percorsi sono relativi alla radice comune del trace,
-indicata in fondo alla pagina.
+Sono due domande diverse: la prima dice di chi è il codice, la seconda chi lo ha voluto.
+Query e chiamate esterne non hanno una definizione, ma hanno un chiamante, ed è quello
+che serve.
+
+Il riquadro colorato è il **componente** — plugin, tema o pacchetto Composer — dedotto dal
+percorso. È la risposta alla domanda che ci si fa davvero davanti a una query lenta: *chi
+la esegue?*
+
+Della pila si mostrano fino a **cinque livelli, uno per file**. Contare i frame non
+basterebbe: dentro `class-wpdb.php` la catena `query` → `_do_query` → … li riempie da
+sola, e il risultato direbbe tre volte che la query passa da `wpdb`. Saltando i frame
+dello stesso file si esce dall'astrazione e si arriva al plugin. I percorsi sono relativi
+alla radice comune del trace, indicata in fondo alla pagina.
 
 **Il profilo delle funzioni interne.** Espressioni regolari, serializzazione, accessi al
 filesystem, compressione, immagini, attese: quante volte e per quanto. Su una homepage

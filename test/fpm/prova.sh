@@ -157,6 +157,29 @@ sqlite3 -header -column /var/lib/orma/orma.db \
 	  GROUP BY stmt_hash ORDER BY statement;"
 
 echo
+echo "-- da dove vengono le query: un livello per file, altrimenti si resta dentro wpdb --"
+sqlite3 /var/lib/orma/orma.db \
+	"SELECT json_extract(value,'\$.n') || '  ' ||
+	        COALESCE(json_extract(value,'\$.pl[0].f') || ':' || json_extract(value,'\$.pl[0].l'), '-') ||
+	        '  <- ' || COALESCE(json_extract(value,'\$.pl[1].f') || ':' || json_extract(value,'\$.pl[1].l'), '-') ||
+	        '  <- ' || COALESCE(json_extract(value,'\$.pl[2].f') || ':' || json_extract(value,'\$.pl[2].l'), '-')
+	   FROM traces, json_each(traces.spans)
+	  WHERE json_extract(value,'\$.a') LIKE '%db.statement%'
+	  ORDER BY json_extract(value,'\$.d') DESC LIMIT 6;" 2>/dev/null
+
+# Se i primi tre livelli stanno tutti nello stesso file, la pila non e' uscita
+# dall'astrazione del database e non dice chi ha voluto la query.
+dentro=$(sqlite3 /var/lib/orma/orma.db \
+	"SELECT COUNT(*) FROM traces, json_each(traces.spans)
+	  WHERE json_extract(value,'\$.a') LIKE '%db.statement%'
+	    AND json_extract(value,'\$.pl[1].f') = json_extract(value,'\$.pl[0].f');" 2>/dev/null)
+echo "query con due livelli nello stesso file: ${dentro:-0} (devono essere 0)"
+if [ "${dentro:-0}" -gt 0 ]; then
+	echo "FALLITO: la pila non esce dal file del chiamante"
+	exit 1
+fi
+
+echo
 echo "-- errori --"
 sqlite3 -header -column /var/lib/orma/orma.db \
 	"SELECT class, substr(message,1,46) AS messaggio, severity AS grave, SUM(count) AS n

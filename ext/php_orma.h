@@ -23,8 +23,16 @@ extern zend_module_entry orma_module_entry;
  *
  * Uno solo non basta: il chiamante immediato di una query e' quasi sempre
  * l'astrazione del framework — su WordPress wpdb::query — e non dice nulla su
- * chi l'ha voluta. Tre livelli arrivano quasi sempre al plugin. */
-#define ORMA_RIF_MAX 3
+ * chi l'ha voluta. */
+#define ORMA_RIF_MAX 5
+
+/* Frame risaliti al massimo per trovare quei livelli.
+ *
+ * Si registra un livello per file: dentro class-wpdb.php la catena query ->
+ * _do_query -> ... occupa da sola tre frame, e tre livelli di wpdb dicono
+ * soltanto che la query passa da wpdb. Saltando i frame dello stesso file si
+ * arriva al plugin, ma la risalita puo' allungarsi, e va limitata. */
+#define ORMA_RIF_FRAME_MAX 64
 
 /* Percorsi distinti internati per richiesta. Oltre, si copia senza internare:
  * si spreca arena, non si perde informazione. */

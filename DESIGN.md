@@ -255,7 +255,7 @@ facendo comparire il nome dell'applicazione al posto dei campi assenti.
 | `chiamate` | u32 | funzioni utente eseguite dentro lo span |
 | `interne_nano` | u64 | tempo nelle funzioni interne profilate |
 | `definizione` | idx string + u32 | file e riga dove la funzione è scritta |
-| `pila` | u8 n + n×(idx string + u32) | da dove è partita la chiamata, fino a 3 livelli |
+| `pila` | u8 n + n×(idx string + u32) | da dove è partita la chiamata, fino a 5 livelli, uno per file |
 | `attributes` | k/v | chiavi OTel semantic conventions |
 
 Chiavi attributo: `db.system`, `db.statement`, `db.operation`, `http.request.method`,
@@ -420,12 +420,22 @@ di chi è il codice — quale plugin, quale tema — la seconda dice chi lo ha v
 e le connessioni non hanno una definizione, esistono nel motore; hanno però un chiamante,
 ed è quello che serve.
 
-Della pila si registrano **tre livelli**, non uno: per una query il chiamante immediato è
-quasi sempre l'astrazione del framework — su WordPress `wpdb::query` — e sapere che la
-query viene da `wpdb` non serve a niente. Tre livelli bastano quasi sempre ad arrivare al
-plugin. La raccolta costa una risalita di `prev_execute_data` per span registrato, senza
-allocazioni: i percorsi vanno nell'arena già usata per i nomi, deduplicati per hash, e nel
-frame diventano indici della string table.
+Della pila si registrano **cinque livelli, uno per file**. Il chiamante immediato di una
+query è quasi sempre l'astrazione del framework, e contare i frame non basta: dentro
+`class-wpdb.php` la catena `query` → `_do_query` → … occupa da sola tre livelli, e il
+risultato dice tre volte che la query passa da `wpdb`. Saltando i frame che stanno nello
+stesso file del livello precedente — del file si tiene il frame più basso, quello con la
+riga esatta — si esce dall'astrazione e si arriva al plugin. La risalita è limitata a 64
+frame, perché una ricorsione dentro un solo file non deve costare più della chiamata.
+
+La raccolta non alloca: i percorsi vanno nell'arena già usata per i nomi, deduplicati per
+hash, e nel frame diventano indici della string table.
+
+Da queste posizioni il daemon deduce il **componente**: il segmento che segue
+`plugins/`, `mu-plugins/`, `themes/`, `modules/`, `extensions/`, oppure i due che seguono
+`vendor/`. È la risposta alla domanda che ci si fa davvero davanti a una query lenta —
+quale plugin la esegue — e sta già dentro il percorso. Il core del framework non somiglia
+a nessuno di questi schemi e viene scavalcato, che è esattamente il comportamento voluto.
 
 Nella UI i percorsi si mostrano relativi alla radice comune del trace: su
 un'installazione tipica ogni riga comincerebbe con gli stessi cinquanta caratteri, che si

@@ -178,9 +178,7 @@ func (t Trace) Rilievi() []Rilievo {
 		}
 		dettaglio := fmt.Sprintf("%.0f ms in totale, %.1f ms l'una — %s",
 			g.TotaleMS, g.MediaMS(), abbrevia(g.Statement, 90))
-		if da := t.origineQuery(g.Statement); da != "" {
-			dettaglio += "\nda " + da
-		}
+		dettaglio += origine(t.spanQuery(g.Statement))
 
 		out = append(out, Rilievo{
 			Tipo:      RilievoRipetizione,
@@ -203,10 +201,7 @@ func (t Trace) Rilievi() []Rilievo {
 		if ms < soglia {
 			continue
 		}
-		dettaglio := abbrevia(stmt, 140)
-		if da := posizioneUtile(s.Pila); da != "" {
-			dettaglio += "\nda " + da
-		}
+		dettaglio := abbrevia(stmt, 140) + origine(&s)
 
 		out = append(out, Rilievo{
 			Tipo:      RilievoQuery,
@@ -246,9 +241,7 @@ func (t Trace) Rilievi() []Rilievo {
 				"sembra attesa su qualcosa che orma non vede, non lavoro."
 		}
 
-		if s.Def != nil {
-			dettaglio += fmt.Sprintf(" — definita in %s:%d", s.Def.File, s.Def.Linea)
-		}
+		dettaglio += origine(&s)
 
 		out = append(out, Rilievo{
 			Tipo:      tipo,
@@ -267,6 +260,37 @@ func (t Trace) Rilievi() []Rilievo {
 	return out
 }
 
+// origine dice di chi e' il codice e dove sta, in coda a un dettaglio.
+//
+// Il componente viene prima del percorso perche' e' la risposta alla domanda
+// vera: davanti a una query lenta si vuole sapere quale plugin la esegue, non
+// quale file del core la trasporta.
+func origine(s *TraceSpan) string {
+	if s == nil {
+		return ""
+	}
+
+	var out string
+	if c := componenteSpan(*s); c != "" {
+		out = "\nnel componente " + c
+	}
+
+	dove := ""
+	if s.Def != nil && s.Def.File != "" {
+		dove = fmt.Sprintf("definita in %s:%d", s.Def.File, s.Def.Linea)
+	} else if p := posizioneUtile(s.Pila); p != "" {
+		dove = "da " + p
+	}
+
+	if dove == "" {
+		return out
+	}
+	if out == "" {
+		return "\n" + dove
+	}
+	return out + ", " + dove
+}
+
 // posizioneUtile sceglie il punto piu' informativo di una pila di chiamata.
 //
 // Prende il livello piu' lontano fra quelli registrati, non il chiamante
@@ -281,14 +305,14 @@ func posizioneUtile(pila []Posizione) string {
 	return ""
 }
 
-// origineQuery trova da dove parte la prima esecuzione di una query.
-func (t Trace) origineQuery(statement string) string {
-	for _, s := range t.Spans {
-		if statementDi(s) == statement {
-			return posizioneUtile(s.Pila)
+// spanQuery trova la prima esecuzione di una query dentro il trace.
+func (t Trace) spanQuery(statement string) *TraceSpan {
+	for i := range t.Spans {
+		if statementDi(t.Spans[i]) == statement {
+			return &t.Spans[i]
 		}
 	}
-	return ""
+	return nil
 }
 
 func azioneProfilo(funzione string) string {

@@ -122,6 +122,11 @@
              max-width: 70ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .wf .pos b { font-weight: 600; font-family: inherit; color: var(--muted); }
   .wf .pos .sep { opacity: .55; padding: 0 .15rem; }
+  /* Di chi e' il codice: plugin, tema, pacchetto. E' la prima cosa che si
+     cerca davanti a una riga lenta, quindi apre la riga ed e' colorata. */
+  .wf .pos .comp { display: inline-block; color: var(--accent); font-weight: 600;
+                   border: 1px solid var(--line); border-radius: 4px;
+                   padding: 0 .3rem; margin-right: .3rem; }
   .wf tr.errore .etichetta { color: var(--err); }
   /* Le righe dove il tempo si ferma davvero: sono il punto da cui partire. */
   .wf tr.sospetto { background: color-mix(in srgb, var(--accent) 9%, transparent); }
